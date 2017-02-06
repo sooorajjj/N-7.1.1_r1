@@ -1,0 +1,2439 @@
+From f7ee0cb57d9ec89b95d6154cab0fa837495a7abe Mon Sep 17 00:00:00 2001
+From: Zhou Song <zhous@codeaurora.org>
+Date: Mon, 21 Sep 2015 14:36:57 +0800
+Subject: [PATCH 01/18] audio_policy: Add extra check before restoring device
+ in stopOutput
+
+When certain game apks run with sound enabled, UI lag will be
+observed.
+
+This is due to device to be restored with double HAL latency even
+when it's the same with the previous device, since setOutputDevice
+is synchronous call now, then it will block the subsequent calling
+to APM until the latency time elapsed.
+
+When the device to be restored is the same as previous device,
+set the latency to 0.
+
+Ported from Change-Id: I2c92675cedd8930430f81147c7f733d8dd70798c
+
+Change-Id: I4582cdc98f4cf8189d89b648e5c3f6e0ce8089ab
+---
+ policy_hal/AudioPolicyManager.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/policy_hal/AudioPolicyManager.cpp b/policy_hal/AudioPolicyManager.cpp
+index 40799b2..edec9fe 100644
+--- a/policy_hal/AudioPolicyManager.cpp
++++ b/policy_hal/AudioPolicyManager.cpp
+@@ -1082,6 +1082,7 @@ status_t AudioPolicyManagerCustom::stopSource(sp<AudioOutputDescriptor> outputDe
+         // store time at which the stream was stopped - see isStreamActive()
+         if (outputDesc->mRefCount[stream] == 0 || forceDeviceUpdate) {
+             outputDesc->mStopTime[stream] = systemTime();
++            audio_devices_t prevDevice = outputDesc->device();
+             audio_devices_t newDevice = getNewOutputDevice(outputDesc, false /*fromCache*/);
+             // delay the device switch by twice the latency because stopOutput() is executed when
+             // the track stop() command is received and at that time the audio track buffer can
+@@ -1100,10 +1101,16 @@ status_t AudioPolicyManagerCustom::stopSource(sp<AudioOutputDescriptor> outputDe
+                         outputDesc->sharesHwModuleWith(desc) &&
+                         (newDevice != desc->device())) {
+                     audio_devices_t dev = getNewOutputDevice(mOutputs.valueFor(curOutput), false /*fromCache*/);
++                    uint32_t delayMs;
++                    if (dev == prevDevice) {
++                        delayMs = 0;
++                    } else {
++                        delayMs = outputDesc->mLatency*2;
++                    }
+                     setOutputDevice(desc,
+                                     dev,
+                                     true,
+-                                    outputDesc->latency()*2);
++                                    delayMs);
+                 }
+             }
+             // update the outputs if stopping one with a stream that can affect notification routing
+-- 
+2.7.4
+
+
+From 89bece2231cca69a846a688c41214bf00fca756d Mon Sep 17 00:00:00 2001
+From: Naresh Tanniru <ntanniru@codeaurora.org>
+Date: Wed, 14 Sep 2016 11:25:37 +0530
+Subject: [PATCH 02/18] audiopolicy: Avoid spurious routing in APM::stopSource
+
+- On AudioOutput::stopSource, ignore routing calls
+on an output descriptor to the same device
+
+Change-Id: I10026d3d9147e45d3ed2b93160922bc3bb4bc2d0
+---
+ policy_hal/AudioPolicyManager.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/policy_hal/AudioPolicyManager.cpp b/policy_hal/AudioPolicyManager.cpp
+index edec9fe..7f65661 100644
+--- a/policy_hal/AudioPolicyManager.cpp
++++ b/policy_hal/AudioPolicyManager.cpp
+@@ -1101,15 +1101,16 @@ status_t AudioPolicyManagerCustom::stopSource(sp<AudioOutputDescriptor> outputDe
+                         outputDesc->sharesHwModuleWith(desc) &&
+                         (newDevice != desc->device())) {
+                     audio_devices_t dev = getNewOutputDevice(mOutputs.valueFor(curOutput), false /*fromCache*/);
++                    bool force = desc->device() != dev;
+                     uint32_t delayMs;
+                     if (dev == prevDevice) {
+                         delayMs = 0;
+                     } else {
+-                        delayMs = outputDesc->mLatency*2;
++                        delayMs = outputDesc->latency()*2;
+                     }
+                     setOutputDevice(desc,
+                                     dev,
+-                                    true,
++                                    force,
+                                     delayMs);
+                 }
+             }
+-- 
+2.7.4
+
+
+From 21cfd0e44d66c2e06de7ed8b9421cdbf81db01e0 Mon Sep 17 00:00:00 2001
+From: Eric Laurent <elaurent@google.com>
+Date: Wed, 28 Sep 2016 16:59:11 -0700
+Subject: [PATCH 03/18] audio policy: fix media volume after ringtone
+
+Fix regression introduced by commit 11c499a5 causing
+music volume not to be restored after ringtone playback
+over duplicated output (speaker + A2DP).
+
+Bug: 31539910
+
+Change-Id: I1c4eebea1f1a8f82ae2acfeecb9a61c437a74e25
+---
+ policy_hal/AudioPolicyManager.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/policy_hal/AudioPolicyManager.cpp b/policy_hal/AudioPolicyManager.cpp
+index 7f65661..9322d48 100644
+--- a/policy_hal/AudioPolicyManager.cpp
++++ b/policy_hal/AudioPolicyManager.cpp
+@@ -1112,6 +1112,10 @@ status_t AudioPolicyManagerCustom::stopSource(sp<AudioOutputDescriptor> outputDe
+                                     dev,
+                                     force,
+                                     delayMs);
++                        // re-apply device specific volume if not done by setOutputDevice()
++                        if (!force) {
++                            applyStreamVolumes(desc, newDevice, delayMs);
++                        }
+                 }
+             }
+             // update the outputs if stopping one with a stream that can affect notification routing
+-- 
+2.7.4
+
+
+From bbb0a11df6a4598b61462a252ebc76764a056991 Mon Sep 17 00:00:00 2001
+From: Luca Stefani <luca.stefani.ge1@gmail.com>
+Date: Fri, 9 Dec 2016 12:11:29 +0100
+Subject: [PATCH 04/18] policy_hal: Fix mismerges
+
+Change-Id: I19344f9ab589e5e6896888a937bed51174e3fa1d
+---
+ policy_hal/AudioPolicyManager.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/policy_hal/AudioPolicyManager.cpp b/policy_hal/AudioPolicyManager.cpp
+index 9322d48..f1951ee 100644
+--- a/policy_hal/AudioPolicyManager.cpp
++++ b/policy_hal/AudioPolicyManager.cpp
+@@ -1114,7 +1114,7 @@ status_t AudioPolicyManagerCustom::stopSource(sp<AudioOutputDescriptor> outputDe
+                                     delayMs);
+                         // re-apply device specific volume if not done by setOutputDevice()
+                         if (!force) {
+-                            applyStreamVolumes(desc, newDevice, delayMs);
++                            applyStreamVolumes(desc, dev, delayMs);
+                         }
+                 }
+             }
+@@ -1995,7 +1995,7 @@ status_t AudioPolicyManagerCustom::startInput(audio_io_handle_t input,
+         if (mInputs.activeInputsCountOnDevices() == 0) {
+             SoundTrigger::setCaptureState(true);
+         }
+-        setInputDevice(input, getNewInputDevice(input), true /* force */);
++        setInputDevice(input, device, true /* force */);
+ 
+         // automatically enable the remote submix output when input is started if not
+         // used by a policy mix of type MIX_TYPE_RECORDERS
+-- 
+2.7.4
+
+
+From 32a13a6fd67937bdfe49f760185ed0c8c14894fc Mon Sep 17 00:00:00 2001
+From: sooorajjj <sooraj.sizon@micromaxinfo.com>
+Date: Sat, 4 Feb 2017 17:55:43 +0530
+Subject: [PATCH 05/18] Fix : miss-merge!
+
+---
+ policy_hal/AudioPolicyManager.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/policy_hal/AudioPolicyManager.cpp b/policy_hal/AudioPolicyManager.cpp
+index f1951ee..93901c6 100644
+--- a/policy_hal/AudioPolicyManager.cpp
++++ b/policy_hal/AudioPolicyManager.cpp
+@@ -1995,7 +1995,7 @@ status_t AudioPolicyManagerCustom::startInput(audio_io_handle_t input,
+         if (mInputs.activeInputsCountOnDevices() == 0) {
+             SoundTrigger::setCaptureState(true);
+         }
+-        setInputDevice(input, device, true /* force */);
++        setInputDevice(input, getNewInputDevice(input), true /* force */);
+ 
+         // automatically enable the remote submix output when input is started if not
+         // used by a policy mix of type MIX_TYPE_RECORDERS
+-- 
+2.7.4
+
+
+From 462b80c4c145748e818e2bde830e49ab26d66fc8 Mon Sep 17 00:00:00 2001
+From: Steve Kondik <steve@cyngn.com>
+Date: Sat, 29 Nov 2014 14:14:43 -0800
+Subject: [PATCH 06/18] hal: Squashed collection of fixes
+
+ * Remove unnecessary ifdefs for PCM offload
+ * Remove unnecessary property for 24-bit support (use audio policy)
+ * Clean up warnings
+
+ * Also includes these patches from Google:
+
+audio: fix set_parameters return value.
+
+xxx_set_parameters functions were returning the status
+returned by str_parms_create_str() which is incorrect.
+These functions should return 0 when no error occurs.
+
+Change-Id: Ib4a7ac427e49f5500c99902f86d2d69d5843eda0
+
+Scan and verify audio device parameters on open
+
+Scanning is default disabled at this time.
+Verbose logs will display device params found.
+
+Change-Id: Id188d096ec68d2058c66ae3a51fe57d9645d03ef
+Signed-off-by: Andy Hung <hunga@google.com>
+
+audio: deprecate audio_stream_frame_size()
+
+Bug: 15000850.
+Change-Id: I1bbe614c241befa24513a2b583594680e32fd954
+---
+ hal/Android.mk              |   4 -
+ hal/audio_extn/audio_extn.h |   2 +-
+ hal/audio_hw.c              | 207 +++++++++++++++++++++++++++++++++++++++-----
+ hal/audio_hw.h              |   8 ++
+ hal/msm8974/platform.c      |   1 -
+ hal/voice_extn/voice_extn.h |   2 +-
+ 6 files changed, 196 insertions(+), 28 deletions(-)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 3c22f26..59f1803 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -46,10 +46,6 @@ LOCAL_SRC_FILES += audio_extn/audio_extn.c \
+ LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+ LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+ 
+-ifeq ($(strip $(AUDIO_FEATURE_ENABLED_PCM_OFFLOAD)),true)
+-    LOCAL_CFLAGS += -DPCM_OFFLOAD_ENABLED
+-endif
+-
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_ANC_HEADSET)),true)
+     LOCAL_CFLAGS += -DANC_HEADSET_ENABLED
+ endif
+diff --git a/hal/audio_extn/audio_extn.h b/hal/audio_extn/audio_extn.h
+index d5b90bd..7442d3b 100644
+--- a/hal/audio_extn/audio_extn.h
++++ b/hal/audio_extn/audio_extn.h
+@@ -22,7 +22,7 @@
+ 
+ #include <cutils/str_parms.h>
+ 
+-#ifndef PCM_OFFLOAD_ENABLED
++#if 0
+ #define AUDIO_FORMAT_PCM_OFFLOAD 0x17000000UL
+ #define AUDIO_FORMAT_PCM_16_BIT_OFFLOAD (AUDIO_FORMAT_PCM_OFFLOAD | AUDIO_FORMAT_PCM_SUB_16_BIT)
+ #define AUDIO_FORMAT_PCM_24_BIT_OFFLOAD (AUDIO_FORMAT_PCM_OFFLOAD | AUDIO_FORMAT_PCM_SUB_8_24_BIT)
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 088c435..cf479b0 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -43,6 +43,7 @@
+ #include <cutils/sched_policy.h>
+ 
+ #include <hardware/audio_effect.h>
++#include <hardware/audio_alsaops.h>
+ #include <system/thread_defs.h>
+ #include <audio_effects/effect_aec.h>
+ #include <audio_effects/effect_ns.h>
+@@ -68,6 +69,11 @@
+ static unsigned int configured_low_latency_capture_period_size =
+         LOW_LATENCY_CAPTURE_PERIOD_SIZE;
+ 
++/* This constant enables extended precision handling.
++ * TODO The flag is off until more testing is done.
++ */
++static const bool k_enable_extended_precision = true;
++
+ struct pcm_config pcm_config_deep_buffer = {
+     .channels = 2,
+     .rate = DEFAULT_OUTPUT_SAMPLING_RATE,
+@@ -1484,6 +1490,7 @@ int start_output_stream(struct stream_out *out)
+ 
+     ALOGV("%s: Opening PCM device card_id(%d) device_id(%d) format(%#x)",
+           __func__, adev->snd_card, out->pcm_device_id, out->config.format);
++
+     if (!is_offload_usecase(out->usecase)) {
+         unsigned int flags = PCM_OUT;
+         unsigned int pcm_open_retry_count = 0;
+@@ -1785,6 +1792,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+     struct str_parms *parms;
+     char value[32];
+     int ret = 0, val = 0, err;
++    int status = 0;
+ 
+     ALOGD("%s: enter: usecase(%d: %s) kvpairs: %s",
+           __func__, out->usecase, use_case_table[out->usecase], kvpairs);
+@@ -1861,8 +1869,8 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+ 
+     str_parms_destroy(parms);
+ error:
+-    ALOGV("%s: exit: code(%d)", __func__, ret);
+-    return ret;
++    ALOGV("%s: exit: code(%d)", __func__, status);
++    return status;
+ }
+ 
+ static char* out_get_parameters(const struct audio_stream *stream, const char *keys)
+@@ -2069,7 +2077,6 @@ exit:
+         out_standby(&out->stream.common);
+         usleep(bytes * 1000000 / audio_stream_out_frame_size(stream) /
+                         out_get_sample_rate(&out->stream.common));
+-
+     }
+     return bytes;
+ }
+@@ -2378,6 +2385,7 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+     struct str_parms *parms;
+     char value[32];
+     int ret = 0, val = 0, err;
++    int status = 0;
+ 
+     ALOGD("%s: enter: kvpairs=%s", __func__, kvpairs);
+     parms = str_parms_create_str(kvpairs);
+@@ -2407,14 +2415,15 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+         }
+     }
+ 
+-    err = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING, value, sizeof(value));
+-    if (err >= 0) {
++    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING, value, sizeof(value));
++
++    if (ret >= 0) {
+         val = atoi(value);
+         if (((int)in->device != val) && (val != 0)) {
+             in->device = val;
+             /* If recording is in progress, change the tx device to new device */
+             if (!in->standby && !in->is_st_session)
+-                ret = select_devices(adev, in->usecase);
++                status = select_devices(adev, in->usecase);
+         }
+     }
+ 
+@@ -2423,8 +2432,8 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+ 
+     str_parms_destroy(parms);
+ error:
+-    ALOGV("%s: exit: status(%d)", __func__, ret);
+-    return ret;
++    ALOGV("%s: exit: status(%d)", __func__, status);
++    return status;
+ }
+ 
+ static char* in_get_parameters(const struct audio_stream *stream,
+@@ -2715,6 +2724,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         else
+             out->compr_config.codec->id =
+                 get_snd_codec_id(config->offload_info.format);
++
+         if (audio_is_offload_pcm(config->offload_info.format)) {
+             out->compr_config.fragment_size =
+                        platform_get_pcm_offload_buffer_size(&config->offload_info);
+@@ -2739,9 +2749,8 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         if(config->offload_info.format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD)
+             out->compr_config.codec->format = SNDRV_PCM_FORMAT_S24_LE;
+ 
+-        if (out->bit_width == 24) {
++        if (out->bit_width == 24)
+             out->compr_config.codec->format = SNDRV_PCM_FORMAT_S24_LE;
+-        }
+ 
+         if (config->offload_info.format == AUDIO_FORMAT_FLAC)
+             out->compr_config.codec->options.flac_dec.sample_size = PCM_OUTPUT_BIT_WIDTH;
+@@ -2789,16 +2798,31 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         out->usecase = USECASE_AUDIO_PLAYBACK_AFE_PROXY;
+         out->config = pcm_config_afe_proxy_playback;
+         adev->voice_tx_output = out;
+-    } else if (out->flags & AUDIO_OUTPUT_FLAG_FAST) {
+-        format = AUDIO_FORMAT_PCM_16_BIT;
+-        out->usecase = USECASE_AUDIO_PLAYBACK_LOW_LATENCY;
+-        out->config = pcm_config_low_latency;
+-        out->sample_rate = out->config.rate;
+     } else {
+-        /* primary path is the default path selected if no other outputs are available/suitable */
+-        format = AUDIO_FORMAT_PCM_16_BIT;
+-        out->usecase = USECASE_AUDIO_PLAYBACK_PRIMARY;
+-        out->config = pcm_config_deep_buffer;
++        if (out->flags & AUDIO_OUTPUT_FLAG_FAST) {
++            out->usecase = USECASE_AUDIO_PLAYBACK_LOW_LATENCY;
++            out->config = pcm_config_low_latency;
++        } else {
++            /* primary path is the default path selected if no other outputs are available/suitable */
++            out->usecase = USECASE_AUDIO_PLAYBACK_PRIMARY;
++            out->config = pcm_config_deep_buffer;
++        }
++        if (config->format != audio_format_from_pcm_format(out->config.format)) {
++            if (k_enable_extended_precision
++                    && pcm_params_format_test(adev->use_case_table[out->usecase],
++                            pcm_format_from_audio_format(config->format))) {
++                out->config.format = pcm_format_from_audio_format(config->format);
++                /* out->format already set to config->format */
++            } else {
++                /* deny the externally proposed config format
++                 * and use the one specified in audio_hw layer configuration.
++                 * Note: out->format is returned by out->stream.common.get_format()
++                 * and is used to set config->format in the code several lines below.
++                 */
++                out->format = audio_format_from_pcm_format(out->config.format);
++            }
++        }
++
+         out->sample_rate = out->config.rate;
+     }
+ 
+@@ -2809,7 +2833,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+                                                 devices, flags, format, out->sample_rate,
+                                                 out->bit_width, &out->app_type_cfg);
+     if ((out->usecase == USECASE_AUDIO_PLAYBACK_PRIMARY) ||
+-        (flags & AUDIO_OUTPUT_FLAG_PRIMARY)) {
++            flags & AUDIO_OUTPUT_FLAG_PRIMARY) {
+         /* Ensure the default output is not selected twice */
+         if(adev->primary_output == NULL)
+             adev->primary_output = out;
+@@ -3009,7 +3033,7 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
+                 list_for_each(node, &adev->usecase_list) {
+                     usecase = node_to_item(node, struct audio_usecase, list);
+                     if (usecase->type == PCM_PLAYBACK) {
+-                        select_devices(adev, usecase->id);
++                        status = select_devices(adev, usecase->id);
+                         break;
+                     }
+                 }
+@@ -3331,8 +3355,144 @@ static int adev_dump(const audio_hw_device_t *device __unused,
+     return 0;
+ }
+ 
++/* verifies input and output devices and their capabilities.
++ *
++ * This verification is required when enabling extended bit-depth or
++ * sampling rates, as not all qcom products support it.
++ *
++ * Suitable for calling only on initialization such as adev_open().
++ * It fills the audio_device use_case_table[] array.
++ *
++ * Has a side-effect that it needs to configure audio routing / devices
++ * in order to power up the devices and read the device parameters.
++ * It does not acquire any hw device lock. Should restore the devices
++ * back to "normal state" upon completion.
++ */
++static int adev_verify_devices(struct audio_device *adev)
++{
++    /* enumeration is a bit difficult because one really wants to pull
++     * the use_case, device id, etc from the hidden pcm_device_table[].
++     * In this case there are the following use cases and device ids.
++     *
++     * [USECASE_AUDIO_PLAYBACK_DEEP_BUFFER] = {0, 0},
++     * [USECASE_AUDIO_PLAYBACK_LOW_LATENCY] = {15, 15},
++     * [USECASE_AUDIO_PLAYBACK_MULTI_CH] = {1, 1},
++     * [USECASE_AUDIO_PLAYBACK_OFFLOAD] = {9, 9},
++     * [USECASE_AUDIO_RECORD] = {0, 0},
++     * [USECASE_AUDIO_RECORD_LOW_LATENCY] = {15, 15},
++     * [USECASE_VOICE_CALL] = {2, 2},
++     *
++     * USECASE_AUDIO_PLAYBACK_OFFLOAD, USECASE_AUDIO_PLAYBACK_MULTI_CH omitted.
++     * USECASE_VOICE_CALL omitted, but possible for either input or output.
++     */
++
++    /* should be the usecases enabled in adev_open_input_stream() */
++    static const int test_in_usecases[] = {
++             USECASE_AUDIO_RECORD,
++             USECASE_AUDIO_RECORD_LOW_LATENCY, /* does not appear to be used */
++    };
++    /* should be the usecases enabled in adev_open_output_stream()*/
++    static const int test_out_usecases[] = {
++            USECASE_AUDIO_PLAYBACK_DEEP_BUFFER,
++            USECASE_AUDIO_PLAYBACK_LOW_LATENCY,
++    };
++    static const usecase_type_t usecase_type_by_dir[] = {
++            PCM_PLAYBACK,
++            PCM_CAPTURE,
++    };
++    static const unsigned flags_by_dir[] = {
++            PCM_OUT,
++            PCM_IN,
++    };
++
++    size_t i;
++    unsigned dir;
++    const unsigned card_id = adev->snd_card;
++#if LOG_NDEBUG == 0
++    char info[512]; /* for possible debug info */
++#endif
++
++    for (dir = 0; dir < 2; ++dir) {
++        const usecase_type_t usecase_type = usecase_type_by_dir[dir];
++        const unsigned flags_dir = flags_by_dir[dir];
++        const size_t testsize =
++                dir ? ARRAY_SIZE(test_in_usecases) : ARRAY_SIZE(test_out_usecases);
++        const int *testcases =
++                dir ? test_in_usecases : test_out_usecases;
++        const audio_devices_t audio_device =
++                dir ? AUDIO_DEVICE_IN_BUILTIN_MIC : AUDIO_DEVICE_OUT_SPEAKER;
++
++        for (i = 0; i < testsize; ++i) {
++            const audio_usecase_t audio_usecase = testcases[i];
++            int device_id;
++            struct pcm_params **pparams;
++            struct stream_out out;
++            struct stream_in in;
++            struct audio_usecase uc_info;
++            int retval;
++
++            pparams = &adev->use_case_table[audio_usecase];
++            pcm_params_free(*pparams); /* can accept null input */
++            *pparams = NULL;
++
++            /* find the device ID for the use case (signed, for error) */
++            device_id = platform_get_pcm_device_id(audio_usecase, usecase_type);
++            if (device_id < 0)
++                continue;
++
++            /* prepare structures for device probing */
++            memset(&uc_info, 0, sizeof(uc_info));
++            uc_info.id = audio_usecase;
++            uc_info.type = usecase_type;
++            if (dir) {
++                adev->active_input = &in;
++                memset(&in, 0, sizeof(in));
++                in.device = audio_device;
++                in.source = AUDIO_SOURCE_VOICE_COMMUNICATION;
++                uc_info.stream.in = &in;
++            }  else {
++                adev->active_input = NULL;
++            }
++            memset(&out, 0, sizeof(out));
++            out.devices = audio_device; /* only field needed in select_devices */
++            uc_info.stream.out = &out;
++            uc_info.devices = audio_device;
++            uc_info.in_snd_device = SND_DEVICE_NONE;
++            uc_info.out_snd_device = SND_DEVICE_NONE;
++            list_add_tail(&adev->usecase_list, &uc_info.list);
++
++            /* select device - similar to start_(in/out)put_stream() */
++            retval = select_devices(adev, audio_usecase);
++            if (retval >= 0) {
++                *pparams = pcm_params_get(card_id, device_id, flags_dir);
++#if LOG_NDEBUG == 0
++                if (*pparams) {
++                    ALOGV("%s: (%s) card %d  device %d", __func__,
++                            dir ? "input" : "output", card_id, device_id);
++                    pcm_params_to_string(*pparams, info, ARRAY_SIZE(info));
++                    ALOGV("%s", info); /* print parameters */
++                } else {
++                    ALOGV("%s: cannot locate card %d  device %d", __func__, card_id, device_id);
++                }
++#endif
++            }
++
++            /* deselect device - similar to stop_(in/out)put_stream() */
++            /* 1. Get and set stream specific mixer controls */
++            retval = disable_audio_route(adev, &uc_info);
++            /* 2. Disable the rx device */
++            retval = disable_snd_device(adev,
++                    dir ? uc_info.in_snd_device : uc_info.out_snd_device);
++            list_remove(&uc_info.list);
++        }
++    }
++    adev->active_input = NULL; /* restore adev state */
++    return 0;
++}
++
+ static int adev_close(hw_device_t *device)
+ {
++    size_t i;
+     struct audio_device *adev = (struct audio_device *)device;
+ 
+     if (!adev)
+@@ -3347,6 +3507,9 @@ static int adev_close(hw_device_t *device)
+         audio_route_free(adev->audio_route);
+         free(adev->snd_dev_ref_cnt);
+         platform_deinit(adev->platform);
++        for (i = 0; i < ARRAY_SIZE(adev->use_case_table); ++i) {
++            pcm_params_free(adev->use_case_table[i]);
++        }
+         free(device);
+         adev = NULL;
+     }
+@@ -3488,6 +3651,8 @@ static int adev_open(const hw_module_t *module, const char *name,
+ 
+     audio_extn_ds2_enable(adev);
+     *device = &adev->device.common;
++    if (k_enable_extended_precision)
++        adev_verify_devices(adev);
+ 
+     audio_extn_utils_update_streams_output_cfg_list(adev->platform, adev->mixer,
+                                                     &adev->streams_output_cfg_list);
+diff --git a/hal/audio_hw.h b/hal/audio_hw.h
+index 28c7628..7efc82b 100644
+--- a/hal/audio_hw.h
++++ b/hal/audio_hw.h
+@@ -300,6 +300,14 @@ struct audio_device {
+     int (*offload_effects_stop_output)(audio_io_handle_t, int);
+ 
+     struct sound_card_status snd_card_status;
++
++    /* The pcm_params use_case_table is loaded by adev_verify_devices() upon
++     * calling adev_open().
++     *
++     * If an entry is not NULL, it can be used to determine if extended precision
++     * or other capabilities are present for the device corresponding to that usecase.
++     */
++    struct pcm_params *use_case_table[AUDIO_USECASE_MAX];
+ };
+ 
+ int select_devices(struct audio_device *adev,
+diff --git a/hal/msm8974/platform.c b/hal/msm8974/platform.c
+index ad8c9d4..8c65d47 100644
+--- a/hal/msm8974/platform.c
++++ b/hal/msm8974/platform.c
+@@ -2951,7 +2951,6 @@ bool platform_check_and_set_codec_backend_cfg(struct audio_device* adev, struct
+         platform_set_codec_backend_cfg(adev, new_bit_width, new_sample_rate);
+         return true;
+     }
+-
+     return false;
+ }
+ 
+diff --git a/hal/voice_extn/voice_extn.h b/hal/voice_extn/voice_extn.h
+index 08599ba..429b2a3 100644
+--- a/hal/voice_extn/voice_extn.h
++++ b/hal/voice_extn/voice_extn.h
+@@ -200,7 +200,7 @@ static int voice_extn_compress_voip_start_output_stream(struct stream_out *out _
+     return -ENOSYS;
+ }
+ 
+-static int voice_extn_compress_voip_set_mic_mute(struct audio_device *adev, bool state __unused)
++static int voice_extn_compress_voip_set_mic_mute(struct audio_device *adev __unused, bool state __unused)
+ {
+     ALOGE("%s: COMPRESS_VOIP_ENABLED is not defined", __func__);
+     return 0;
+-- 
+2.7.4
+
+
+From 71ee1bd50a34efe17723e9d76d05d7cac5b1abf2 Mon Sep 17 00:00:00 2001
+From: Steve Kondik <steve@cyngn.com>
+Date: Tue, 23 Dec 2014 12:33:26 -0800
+Subject: [PATCH 07/18] hal: Fix issues with app type config during device
+ verification
+
+ * Don't try to send the app type config during verification as the
+   streams aren't set up yet and will crash due to null pointers.
+
+Change-Id: Ic4cdd5374b46b3e3c2042b158820af5ec020e754
+---
+ hal/audio_extn/utils.c | 12 ++++++++++--
+ hal/audio_hw.c         |  5 +++--
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/hal/audio_extn/utils.c b/hal/audio_extn/utils.c
+index 58dce3a..e3746cd 100644
+--- a/hal/audio_extn/utils.c
++++ b/hal/audio_extn/utils.c
+@@ -449,7 +449,7 @@ void audio_extn_utils_update_stream_app_type_cfg(void *platform,
+            __func__, flags, format, sample_rate);
+     list_for_each(node_i, streams_output_cfg_list) {
+         so_info = node_to_item(node_i, struct streams_output_cfg, list);
+-        if (so_info->flags == flags) {
++        if (so_info != NULL && so_info->flags == flags) {
+             list_for_each(node_j, &so_info->format_list) {
+                 sf_info = node_to_item(node_j, struct stream_format, list);
+                 if (sf_info->format == format) {
+@@ -461,7 +461,7 @@ void audio_extn_utils_update_stream_app_type_cfg(void *platform,
+     }
+     list_for_each(node_i, streams_output_cfg_list) {
+         so_info = node_to_item(node_i, struct streams_output_cfg, list);
+-        if (so_info->flags == AUDIO_OUTPUT_FLAG_PRIMARY) {
++        if (so_info != NULL && so_info->flags == AUDIO_OUTPUT_FLAG_PRIMARY) {
+             ALOGV("Compatible output profile not found.");
+             app_type_cfg->app_type = so_info->app_type_cfg.app_type;
+             app_type_cfg->sample_rate = so_info->app_type_cfg.sample_rate;
+@@ -505,10 +505,18 @@ int audio_extn_utils_send_app_type_cfg(struct audio_usecase *usecase)
+     out = usecase->stream.out;
+     adev = out->dev;
+ 
++    if (adev == NULL) {
++        ALOGE("Device not ready, skip app type update");
++        rc = 0;
++        goto exit_send_app_type_cfg;
++    }
++
+     snd_device = usecase->out_snd_device;
+ 
+     pcm_device_id = platform_get_pcm_device_id(out->usecase, PCM_PLAYBACK);
+ 
++    ALOGV("%s: usecase=%d pcm_device_id=%d", __func__, usecase->id, pcm_device_id);
++
+     snprintf(mixer_ctl_name, sizeof(mixer_ctl_name),
+              "Audio Stream %d App Type Cfg", pcm_device_id);
+ 
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index cf479b0..61b08e7 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -3651,8 +3651,6 @@ static int adev_open(const hw_module_t *module, const char *name,
+ 
+     audio_extn_ds2_enable(adev);
+     *device = &adev->device.common;
+-    if (k_enable_extended_precision)
+-        adev_verify_devices(adev);
+ 
+     audio_extn_utils_update_streams_output_cfg_list(adev->platform, adev->mixer,
+                                                     &adev->streams_output_cfg_list);
+@@ -3677,6 +3675,9 @@ static int adev_open(const hw_module_t *module, const char *name,
+         }
+     }
+ 
++    if (k_enable_extended_precision)
++        adev_verify_devices(adev);
++
+     pthread_mutex_unlock(&adev_init_lock);
+ 
+     ALOGV("%s: exit", __func__);
+-- 
+2.7.4
+
+
+From b6539a3e78823110ba21451121a7e9c710af5baa Mon Sep 17 00:00:00 2001
+From: Alexy Joseph <alexyj@codeaurora.org>
+Date: Wed, 3 Dec 2014 02:46:47 -0800
+Subject: [PATCH 08/18] hal: bug fixes for PCM offload
+
+When pcm offload is done, override the buffer size
+that was calculated and use the value from the system property
+Make write call blocking if small buffers are used in offload
+Update latency value for pcm offload with small buffer hint based
+on period size and period count.
+
+Change-Id: Ic74caa6bd172c8e4554384e9fa98a5137117f07c
+---
+ hal/audio_hw.c         | 30 ++++++++++++++++++++++++++----
+ hal/audio_hw.h         |  1 +
+ hal/msm8974/platform.c | 46 +++++++++++++++++++++++-----------------------
+ 3 files changed, 50 insertions(+), 27 deletions(-)
+
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 61b08e7..c5c6e6b 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -1926,12 +1926,23 @@ static char* out_get_parameters(const struct audio_stream *stream, const char *k
+ static uint32_t out_get_latency(const struct audio_stream_out *stream)
+ {
+     struct stream_out *out = (struct stream_out *)stream;
++    uint32_t latency = 0;
+ 
+-    if (is_offload_usecase(out->usecase))
+-        return COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
+-
+-    return (out->config.period_count * out->config.period_size * 1000) /
++    if (is_offload_usecase(out->usecase)) {
++        if (out->use_small_bufs == true)
++            latency = ((out->compr_config.fragments *
++                   out->compr_config.fragment_size * 1000) /
++                   (out->sample_rate * out->compr_config.codec->ch_in *
++                   audio_bytes_per_sample(out->format)));
++        else
++            latency = COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
++    } else {
++        latency = (out->config.period_count * out->config.period_size * 1000) /
+            (out->config.rate);
++    }
++
++    ALOGV("%s: Latency %d", latency);
++    return latency;
+ }
+ 
+ static int out_set_volume(struct audio_stream_out *stream, float left,
+@@ -2641,6 +2652,8 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     out->supported_channel_masks[0] = AUDIO_CHANNEL_OUT_STEREO;
+     out->handle = handle;
+     out->bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
++    out->non_blocking = 0;
++    out->use_small_bufs = false;
+ 
+     /* Init use case and pcm_config */
+     if ((out->flags == AUDIO_OUTPUT_FLAG_DIRECT) &&
+@@ -2758,6 +2771,15 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         if (flags & AUDIO_OUTPUT_FLAG_NON_BLOCKING)
+             out->non_blocking = 1;
+ 
++        if (config->offload_info.use_small_bufs) {
++            //this flag is set from framework only if its for PCM formats
++            //no need to check for PCM format again
++            out->non_blocking = 0;
++            out->use_small_bufs = true;
++            ALOGI("Keep write blocking for small buff: non_blockling %d",
++                  out->non_blocking);
++        }
++
+         out->send_new_metadata = 1;
+         out->offload_state = OFFLOAD_STATE_IDLE;
+         out->playback_started = 0;
+diff --git a/hal/audio_hw.h b/hal/audio_hw.h
+index 7efc82b..5cada3a 100644
+--- a/hal/audio_hw.h
++++ b/hal/audio_hw.h
+@@ -182,6 +182,7 @@ struct stream_out {
+     struct stream_app_type_cfg app_type_cfg;
+ 
+     int non_blocking;
++    bool use_small_bufs;
+     int playback_started;
+     int offload_state;
+     pthread_cond_t offload_cond;
+diff --git a/hal/msm8974/platform.c b/hal/msm8974/platform.c
+index 8c65d47..dc4627d 100644
+--- a/hal/msm8974/platform.c
++++ b/hal/msm8974/platform.c
+@@ -56,6 +56,8 @@
+ /* Used in calculating fragment size for pcm offload */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV 1000 /* 1 sec */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING 80 /* 80 millisecs */
++#define PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS 20 /* 20 millisecs */
++#define PCM_OFFLOAD_BUFFER_DURATION_MAX 1200  /* 1200 millisecs */
+ 
+ /* MAX PCM fragment size cannot be increased  further due
+  * to flinger's cblk size of 1mb,and it has to be a multiple of
+@@ -2741,44 +2743,42 @@ uint32_t platform_get_compress_offload_buffer_size(audio_offload_info_t* info)
+ 
+ uint32_t platform_get_pcm_offload_buffer_size(audio_offload_info_t* info)
+ {
+-    uint32_t fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
++    uint32_t fragment_size = 0;
+     uint32_t bits_per_sample = 16;
++    uint32_t pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
+ 
+     if (info->format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD) {
+         bits_per_sample = 32;
+     }
+ 
+-    if (!info->has_video) {
+-        fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
+-
+-    } else if (info->has_video && info->is_streaming) {
+-        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING
+-                                     * info->sample_rate
+-                                     * (bits_per_sample >> 3)
+-                                     * popcount(info->channel_mask))/1000;
+-
+-    } else if (info->has_video) {
+-        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV
+-                                     * info->sample_rate
+-                                     * (bits_per_sample >> 3)
+-                                     * popcount(info->channel_mask))/1000;
++    if (info->use_small_bufs) {
++        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
++    } else {
++        if (!info->has_video) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_MAX;
++        } else if (info->has_video && info->is_streaming) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING;
++        } else if (info->has_video) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV;
++        }
+     }
+ 
+-    char value[PROPERTY_VALUE_MAX] = {0};
+-    if((property_get("audio.offload.pcm.buffer.size", value, "")) &&
+-            atoi(value)) {
+-        fragment_size =  atoi(value) * 1024;
+-        ALOGV("Using buffer size from sys prop %d", fragment_size);
+-    }
++    //duration is set to 20 ms worth of stereo data at 48Khz
++    //with 16 bit per sample, modify this when the channel
++    //configuration is different
++    fragment_size = (pcm_offload_time
++                     * info->sample_rate
++                     * (bits_per_sample >> 3)
++                     * popcount(info->channel_mask))/1000;
+ 
+-    fragment_size = ALIGN( fragment_size, 1024);
++    fragment_size = ALIGN (fragment_size, 1024);
+ 
+     if(fragment_size < MIN_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
+     else if(fragment_size > MAX_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
+ 
+-    ALOGV("%s: fragment_size %d", __func__, fragment_size);
++    ALOGI("PCM offload Fragment size to %d bytes", fragment_size);
+     return fragment_size;
+ }
+ 
+-- 
+2.7.4
+
+
+From b6b81def32fb5f8332ed6274618c73424c292790 Mon Sep 17 00:00:00 2001
+From: Steve Kondik <steve@cyngn.com>
+Date: Tue, 7 Oct 2014 12:16:17 -0700
+Subject: [PATCH 09/18] hal: Port fixes and features to msm8916 HAL
+
+ * Offload enhancements, 24-bit, etc
+
+Change-Id: I728154c2c01650ea88b994b0ad73711694c64070
+---
+ hal/Android.mk         |  24 +++-
+ hal/audio_hw.c         |  20 ++-
+ hal/msm8916/platform.c | 322 +++++++++++++++++++++++++++++++++++++++++++------
+ hal/msm8916/platform.h |   2 +-
+ 4 files changed, 328 insertions(+), 40 deletions(-)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 59f1803..666a923 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -88,10 +88,9 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SSR)),true)
+     LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/common/inc/
+ endif
+ 
+-ifeq ($(strip $(AUDIO_FEATURE_ENABLED_MULTI_VOICE_SESSIONS)),true)
++ifneq ($(strip $(AUDIO_FEATURE_ENABLED_MULTI_VOICE_SESSIONS)),false)
+     LOCAL_CFLAGS += -DMULTI_VOICE_SESSION_ENABLED
+     LOCAL_SRC_FILES += voice_extn/voice_extn.c
+-
+ ifneq ($(strip $(AUDIO_FEATURE_ENABLED_INCALL_MUSIC)),false)
+     LOCAL_CFLAGS += -DINCALL_MUSIC_ENABLED
+ endif
+@@ -99,7 +98,6 @@ ifneq ($(strip $(AUDIO_FEATURE_ENABLED_COMPRESS_VOIP)),false)
+     LOCAL_CFLAGS += -DCOMPRESS_VOIP_ENABLED
+     LOCAL_SRC_FILES += voice_extn/compress_voip.c
+ endif
+-
+ endif
+ 
+ ifneq ($(strip $(AUDIO_FEATURE_ENABLED_EXTN_FORMATS)),false)
+@@ -137,6 +135,26 @@ ifneq ($(strip $(DOLBY_DDP)),true)
+ endif
+ endif
+ 
++ifeq ($(AUDIO_FEATURE_LOW_LATENCY_PRIMARY),true)
++    LOCAL_CFLAGS += -DLOW_LATENCY_PRIMARY
++endif
++
++ifneq ($(filter msm8974 msm8226 msm8610 msm8916,$(TARGET_BOARD_PLATFORM)),)
++ifneq ($(strip $(AUDIO_FEATURE_DISABLED_WMA_OFFLOAD_DISABLED)),true)
++    LOCAL_CFLAGS += -DWMA_OFFLOAD_ENABLED
++    LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
++    LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++endif
++endif
++
++ifneq ($(filter msm8974 msm8226 msm8610 msm8916,$(TARGET_BOARD_PLATFORM)),)
++ifneq ($(strip $(AUDIO_FEATURE_DISABLED_MP2_OFFLOAD)),true)
++    LOCAL_CFLAGS += -DMP2_OFFLOAD_ENABLED
++    LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
++    LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
++endif
++endif
++
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_MULTIPLE_TUNNEL)), true)
+     LOCAL_CFLAGS += -DMULTIPLE_OFFLOAD_ENABLED
+ endif
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index c5c6e6b..91bf9fc 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -64,7 +64,11 @@
+ #define PROXY_OPEN_RETRY_COUNT           100
+ #define PROXY_OPEN_WAIT_TIME             20
+ 
++#ifdef LOW_LATENCY_PRIMARY
++#define USECASE_AUDIO_PLAYBACK_PRIMARY USECASE_AUDIO_PLAYBACK_LOW_LATENCY
++#else
+ #define USECASE_AUDIO_PLAYBACK_PRIMARY USECASE_AUDIO_PLAYBACK_DEEP_BUFFER
++#endif
+ 
+ static unsigned int configured_low_latency_capture_period_size =
+         LOW_LATENCY_CAPTURE_PERIOD_SIZE;
+@@ -259,6 +263,7 @@ static int check_and_set_gapless_mode(struct audio_device *adev) {
+ 
+ static bool is_supported_format(audio_format_t format)
+ {
++    ALOGV("%s: format=%x", __func__, format);
+     if (format == AUDIO_FORMAT_MP3 ||
+         format == AUDIO_FORMAT_AAC_LC ||
+         format == AUDIO_FORMAT_AAC_HE_V1 ||
+@@ -1941,7 +1946,7 @@ static uint32_t out_get_latency(const struct audio_stream_out *stream)
+            (out->config.rate);
+     }
+ 
+-    ALOGV("%s: Latency %d", latency);
++    ALOGV("%s: Latency %d", __func__, latency);
+     return latency;
+ }
+ 
+@@ -2700,7 +2705,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         }
+         if (!is_supported_format(config->offload_info.format) &&
+                 !audio_extn_is_dolby_format(config->offload_info.format)) {
+-            ALOGE("%s: Unsupported audio format", __func__);
++            ALOGE("%s: Unsupported audio format: %x", __func__, config->offload_info.format);
+             ret = -EINVAL;
+             goto error_open;
+         }
+@@ -2821,13 +2826,24 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         out->config = pcm_config_afe_proxy_playback;
+         adev->voice_tx_output = out;
+     } else {
++#ifndef LOW_LATENCY_PRIMARY
+         if (out->flags & AUDIO_OUTPUT_FLAG_FAST) {
+             out->usecase = USECASE_AUDIO_PLAYBACK_LOW_LATENCY;
+             out->config = pcm_config_low_latency;
++#endif
++#ifdef LOW_LATENCY_PRIMARY
++        if (out->flags & AUDIO_OUTPUT_FLAG_DEEP_BUFFER) {
++            out->usecase = USECASE_AUDIO_PLAYBACK_DEEP_BUFFER;
++            out->config = pcm_config_deep_buffer;
++#endif
+         } else {
+             /* primary path is the default path selected if no other outputs are available/suitable */
+             out->usecase = USECASE_AUDIO_PLAYBACK_PRIMARY;
++#ifdef LOW_LATENCY_PRIMARY
++            out->config = pcm_config_low_latency;
++#else
+             out->config = pcm_config_deep_buffer;
++#endif
+         }
+         if (config->format != audio_format_from_pcm_format(out->config.format)) {
+             if (k_enable_extended_precision
+diff --git a/hal/msm8916/platform.c b/hal/msm8916/platform.c
+index 4775579..4ac2b13 100644
+--- a/hal/msm8916/platform.c
++++ b/hal/msm8916/platform.c
+@@ -67,6 +67,8 @@
+ /* Used in calculating fragment size for pcm offload */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV 2000 /* 2 secs */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING 100 /* 100 millisecs */
++#define PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS 20 /* 20 millisecs */
++#define PCM_OFFLOAD_BUFFER_DURATION_MAX 1200  /* 1200 millisecs */
+ 
+ /* MAX PCM fragment size cannot be increased  further due
+  * to flinger's cblk size of 1mb,and it has to be a multiple of
+@@ -129,8 +131,8 @@ char * dsp_only_decoders_mime[] = {
+ };
+ 
+ enum {
+-	VOICE_FEATURE_SET_DEFAULT,
+-	VOICE_FEATURE_SET_VOLUME_BOOST
++    VOICE_FEATURE_SET_DEFAULT,
++    VOICE_FEATURE_SET_VOLUME_BOOST
+ };
+ 
+ struct audio_block_header
+@@ -187,7 +189,7 @@ static const int pcm_device_table_of_ext_codec[AUDIO_USECASE_MAX][2] = {
+ /* List of use cases that has different PCM device ID's for internal and external codecs */
+ static const int misc_usecase[AUDIO_USECASE_MAX] = { USECASE_QCHAT_CALL };
+ 
+-static const int pcm_device_table[AUDIO_USECASE_MAX][2] = {
++static int pcm_device_table[AUDIO_USECASE_MAX][2] = {
+     [USECASE_AUDIO_PLAYBACK_DEEP_BUFFER] = {DEEP_BUFFER_PCM_DEVICE,
+                                             DEEP_BUFFER_PCM_DEVICE},
+     [USECASE_AUDIO_PLAYBACK_LOW_LATENCY] = {LOWLATENCY_PCM_DEVICE,
+@@ -236,7 +238,7 @@ static const int pcm_device_table[AUDIO_USECASE_MAX][2] = {
+ };
+ 
+ /* Array to store sound devices */
+-static const char * const device_table[SND_DEVICE_MAX] = {
++static char * device_table[SND_DEVICE_MAX] = {
+     [SND_DEVICE_NONE] = "none",
+     /* Playback sound devices */
+     [SND_DEVICE_OUT_HANDSET] = "handset",
+@@ -336,6 +338,9 @@ static const char * const device_table[SND_DEVICE_MAX] = {
+     [SND_DEVICE_IN_UNPROCESSED_HEADSET_MIC] = "headset-mic",
+ };
+ 
++// Platform specific backend bit width table
++static int backend_bit_width_table[SND_DEVICE_MAX] = {0};
++
+ /* ACDB IDs (audio DSP path configuration IDs) for each sound device */
+ static int acdb_device_table[SND_DEVICE_MAX] = {
+     [SND_DEVICE_NONE] = -1,
+@@ -435,7 +440,7 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
+     [SND_DEVICE_IN_UNPROCESSED_HEADSET_MIC] = 147,
+ };
+ 
+-struct snd_device_index {
++struct name_to_index {
+     char name[100];
+     unsigned int index;
+ };
+@@ -443,7 +448,7 @@ struct snd_device_index {
+ #define TO_NAME_INDEX(X)   #X, X
+ 
+ /* Used to get index from parsed sting */
+-struct snd_device_index snd_device_name_index[SND_DEVICE_MAX] = {
++struct name_to_index snd_device_name_index[SND_DEVICE_MAX] = {
+     {TO_NAME_INDEX(SND_DEVICE_OUT_HANDSET)},
+     {TO_NAME_INDEX(SND_DEVICE_OUT_SPEAKER)},
+     {TO_NAME_INDEX(SND_DEVICE_OUT_SPEAKER_WSA)},
+@@ -591,6 +596,25 @@ static int msm_device_to_be_id_external_codec [][NO_COLS] = {
+        {AUDIO_DEVICE_OUT_DEFAULT                        ,      -1},
+ };
+ 
++static char * backend_table[SND_DEVICE_MAX] = {0};
++
++static struct name_to_index usecase_name_index[AUDIO_USECASE_MAX] = {
++    {TO_NAME_INDEX(USECASE_AUDIO_PLAYBACK_DEEP_BUFFER)},
++    {TO_NAME_INDEX(USECASE_AUDIO_PLAYBACK_LOW_LATENCY)},
++    {TO_NAME_INDEX(USECASE_AUDIO_PLAYBACK_MULTI_CH)},
++    {TO_NAME_INDEX(USECASE_AUDIO_PLAYBACK_OFFLOAD)},
++    {TO_NAME_INDEX(USECASE_AUDIO_RECORD)},
++    {TO_NAME_INDEX(USECASE_AUDIO_RECORD_LOW_LATENCY)},
++    {TO_NAME_INDEX(USECASE_VOICE_CALL)},
++    {TO_NAME_INDEX(USECASE_VOICE2_CALL)},
++    {TO_NAME_INDEX(USECASE_VOLTE_CALL)},
++    {TO_NAME_INDEX(USECASE_QCHAT_CALL)},
++    {TO_NAME_INDEX(USECASE_VOWLAN_CALL)},
++    {TO_NAME_INDEX(USECASE_INCALL_REC_UPLINK)},
++    {TO_NAME_INDEX(USECASE_INCALL_REC_DOWNLINK)},
++    {TO_NAME_INDEX(USECASE_INCALL_REC_UPLINK_AND_DOWNLINK)},
++    {TO_NAME_INDEX(USECASE_AUDIO_HFP_SCO)},
++};
+ 
+ #define DEEP_BUFFER_PLATFORM_DELAY (29*1000LL)
+ #define LOW_LATENCY_PLATFORM_DELAY (13*1000LL)
+@@ -1485,6 +1509,41 @@ int platform_get_pcm_device_id(audio_usecase_t usecase, int device_type)
+     return device_id;
+ }
+ 
++static int find_index(struct name_to_index * table, int32_t len, const char * name)
++{
++    int ret = 0;
++    int i;
++
++    if (table == NULL) {
++        ALOGE("%s: table is NULL", __func__);
++        ret = -ENODEV;
++        goto done;
++    }
++
++    if (name == NULL) {
++        ALOGE("null key");
++        ret = -ENODEV;
++        goto done;
++    }
++
++    for (i=0; i < len; i++) {
++        const char* tn = table[i].name;
++        unsigned int len = strlen(tn);
++        if (strncmp(tn, name, len) == 0) {
++            if (strlen(name) != len) {
++                continue; // substring
++            }
++            ret = table[i].index;
++            goto done;
++        }
++    }
++    ALOGE("%s: Could not find index for name = %s",
++            __func__, name);
++    ret = -ENODEV;
++done:
++    return ret;
++}
++
+ int platform_get_snd_device_index(char *snd_device_index_name)
+ {
+     int ret = 0;
+@@ -1603,14 +1662,27 @@ int platform_get_snd_device_acdb_id(snd_device_t snd_device)
+ 
+ int platform_set_snd_device_bit_width(snd_device_t snd_device __unused, unsigned int bit_width __unused)
+ {
+-    ALOGE("%s: Not implemented", __func__);
+-    return -ENOSYS;
++    int ret = 0;
++
++    if ((snd_device < SND_DEVICE_MIN) || (snd_device >= SND_DEVICE_MAX)) {
++        ALOGE("%s: Invalid snd_device = %d",
++            __func__, snd_device);
++        ret = -EINVAL;
++        goto done;
++    }
++
++    backend_bit_width_table[snd_device] = bit_width;
++done:
++    return ret;
+ }
+ 
+ int platform_get_snd_device_bit_width(snd_device_t snd_device __unused)
+ {
+-    ALOGE("%s: Not implemented", __func__);
+-    return -ENOSYS;
++    if ((snd_device < SND_DEVICE_MIN) || (snd_device >= SND_DEVICE_MAX)) {
++        ALOGE("%s: Invalid snd_device = %d", __func__, snd_device);
++        return DEFAULT_OUTPUT_SAMPLING_RATE;
++    }
++    return backend_bit_width_table[snd_device];
+ }
+ 
+ int platform_send_audio_calibration(void *platform, struct audio_usecase *usecase,
+@@ -2942,6 +3014,14 @@ uint32_t platform_get_compress_offload_buffer_size(audio_offload_info_t* info)
+         fragment_size =  atoi(value) * 1024;
+     }
+ 
++    // For FLAC use max size since it is loss less, and has sampling rates
++    // upto 192kHZ
++    if (info != NULL && !info->has_video &&
++        info->format == AUDIO_FORMAT_FLAC) {
++       fragment_size = MAX_COMPRESS_OFFLOAD_FRAGMENT_SIZE;
++       ALOGV("FLAC fragment size %d", fragment_size);
++    }
++
+     if (info != NULL && info->has_video && info->is_streaming) {
+         fragment_size = COMPRESS_OFFLOAD_FRAGMENT_SIZE_FOR_AV_STREAMING;
+         ALOGV("%s: offload fragment size reduced for AV streaming to %d",
+@@ -2960,37 +3040,42 @@ uint32_t platform_get_compress_offload_buffer_size(audio_offload_info_t* info)
+ 
+ uint32_t platform_get_pcm_offload_buffer_size(audio_offload_info_t* info)
+ {
+-    uint32_t fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
++    uint32_t fragment_size = 0;
+     uint32_t bits_per_sample = 16;
++    uint32_t pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
+ 
+     if (info->format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD) {
+         bits_per_sample = 32;
+     }
+ 
+-    if (!info->has_video) {
+-        fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
+-
+-    } else if (info->has_video && info->is_streaming) {
+-        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING
+-                                     * info->sample_rate
+-                                     * bits_per_sample
+-                                     * popcount(info->channel_mask))/1000;
+-
+-    } else if (info->has_video) {
+-        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV
+-                                     * info->sample_rate
+-                                     * bits_per_sample
+-                                     * popcount(info->channel_mask))/1000;
++    if (info->use_small_bufs) {
++        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
++    } else {
++        if (!info->has_video) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_MAX;
++        } else if (info->has_video && info->is_streaming) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING;
++        } else if (info->has_video) {
++            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV;
++        }
+     }
+ 
+-    fragment_size = ALIGN( fragment_size, 1024);
++    //duration is set to 20 ms worth of stereo data at 48Khz
++    //with 16 bit per sample, modify this when the channel
++    //configuration is different
++    fragment_size = (pcm_offload_time
++                     * info->sample_rate
++                     * (bits_per_sample >> 3)
++                     * popcount(info->channel_mask))/1000;
++
++    fragment_size = ALIGN (fragment_size, 1024);
+ 
+     if(fragment_size < MIN_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
+     else if(fragment_size > MAX_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
+ 
+-    ALOGV("%s: fragment_size %d", __func__, fragment_size);
++    ALOGI("PCM offload Fragment size to %d bytes", fragment_size);
+     return fragment_size;
+ }
+ 
+@@ -3001,13 +3086,7 @@ void platform_get_device_to_be_id_map(int **device_to_be_id, int *length)
+ }
+ 
+ bool platform_check_24_bit_support() {
+-    return false;
+-}
+-
+-bool platform_check_and_set_codec_backend_cfg(struct audio_device* adev __unused,
+-                                              struct audio_usecase *usecase __unused)
+-{
+-    return false;
++    return true;
+ }
+ 
+ int platform_get_usecase_index(const char * usecase __unused)
+@@ -3231,4 +3310,179 @@ int platform_set_channel_map(void *platform, int ch_count, char *ch_map, int snd
+               __func__, ret, ch_count);
+     }
+     return ret;
++static unsigned int get_best_backend_sample_rate(unsigned int sample_rate) {
++
++    // codec backend can take 48K, 96K, and 192K
++    if (sample_rate <= 48000)
++        return 48000;
++    if (sample_rate <= 96000)
++        return 96000;
++    if (sample_rate <= 192000)
++        return 192000;
++    return CODEC_BACKEND_DEFAULT_SAMPLE_RATE;
++}
++
++static unsigned int get_best_backend_bit_width(unsigned int bit_width) {
++
++    if (bit_width == 24)
++        return 24;
++    return CODEC_BACKEND_DEFAULT_BIT_WIDTH;
++}
++
++int platform_set_codec_backend_cfg(struct audio_device* adev,
++                         unsigned int bit_width, unsigned int sample_rate)
++{
++    ALOGV("platform_set_codec_backend_cfg bw %d, sr %d", bit_width, sample_rate);
++
++    int ret = 0;
++    if (bit_width != adev->cur_codec_backend_bit_width) {
++        const char * mixer_ctl_name = "MI2S_RX Format";
++        struct  mixer_ctl *ctl;
++        ctl = mixer_get_ctl_by_name(adev->mixer, mixer_ctl_name);
++        if (!ctl) {
++            ALOGE("%s: Could not get ctl for mixer command - %s",
++                    __func__, mixer_ctl_name);
++            return -EINVAL;
++        }
++
++        if (bit_width == 24) {
++                mixer_ctl_set_enum_by_string(ctl, "S24_LE");
++        } else {
++            mixer_ctl_set_enum_by_string(ctl, "S16_LE");
++            sample_rate = CODEC_BACKEND_DEFAULT_SAMPLE_RATE;
++        }
++        adev->cur_codec_backend_bit_width = bit_width;
++        ALOGE("Backend bit width is set to %d ", bit_width);
++    }
++
++    if ((adev->cur_codec_backend_bit_width == CODEC_BACKEND_DEFAULT_BIT_WIDTH &&
++             adev->cur_codec_backend_samplerate != CODEC_BACKEND_DEFAULT_SAMPLE_RATE) ||
++        (adev->cur_codec_backend_samplerate != sample_rate)) {
++
++            char *rate_str = NULL;
++            const char * mixer_ctl_name = "MI2S_RX SampleRate";
++            struct  mixer_ctl *ctl;
++
++            switch (sample_rate) {
++            case 8000:
++            case 11025:
++            case 16000:
++            case 22050:
++            case 32000:
++            case 44100:
++            case 48000:
++                rate_str = "KHZ_48";
++                break;
++            case 64000:
++            case 88200:
++            case 96000:
++                rate_str = "KHZ_96";
++                break;
++            case 176400:
++            case 192000:
++                rate_str = "KHZ_192";
++                break;
++            default:
++                rate_str = "KHZ_48";
++                break;
++            }
++
++            ctl = mixer_get_ctl_by_name(adev->mixer, mixer_ctl_name);
++            if(!ctl) {
++                ALOGE("%s: Could not get ctl for mixer command - %s",
++                    __func__, mixer_ctl_name);
++                return -EINVAL;
++            }
++
++            ALOGV("Set sample rate as rate_str = %s", rate_str);
++            mixer_ctl_set_enum_by_string(ctl, rate_str);
++            adev->cur_codec_backend_samplerate = sample_rate;
++    }
++
++    return ret;
++}
++
++bool platform_check_codec_backend_cfg(struct audio_device* adev,
++                                   struct audio_usecase* usecase __unused,
++                                   unsigned int* new_bit_width,
++                                   unsigned int* new_sample_rate)
++{
++    bool backend_change = false;
++    struct listnode *node;
++    unsigned int cur_sr, cur_bw, best_bw = 0, best_sr = 0;
++
++    // For voice calls use default configuration
++    // force routing is not required here, caller will do it anyway
++    if (adev->mode == AUDIO_MODE_IN_CALL ||
++        adev->mode == AUDIO_MODE_IN_COMMUNICATION) {
++        ALOGW("%s:Use default bw and sr for voice/voip calls ",__func__);
++        *new_bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
++        *new_sample_rate =  CODEC_BACKEND_DEFAULT_SAMPLE_RATE;
++        backend_change = true;
++    }
++
++
++    if (!backend_change) {
++        // go through all the offload usecases, and
++        // find the max bit width and samplerate
++        list_for_each(node, &adev->usecase_list) {
++            struct audio_usecase *curr_usecase;
++            curr_usecase = node_to_item(node, struct audio_usecase, list);
++            struct stream_out *out =
++                       (struct stream_out*) curr_usecase->stream.out;
++            if (out != NULL) {
++                cur_sr = get_best_backend_sample_rate(out->sample_rate);
++                cur_bw = get_best_backend_bit_width(out->bit_width);
++
++                ALOGV("Playback running bw %d sr %d standby %d",
++                          cur_bw, cur_sr, out->standby);
++
++                if (cur_bw > best_bw) {
++                    best_bw = cur_bw;
++                }
++
++                if (cur_sr > best_sr) {
++                    best_sr = cur_sr;
++                }
++            }
++        }
++    }
++    *new_bit_width = best_bw;
++    *new_sample_rate = best_sr;
++
++    // Force routing if the expected bitwdith or samplerate
++    // is not same as current backend comfiguration
++    if ((*new_bit_width != adev->cur_codec_backend_bit_width) ||
++        (*new_sample_rate != adev->cur_codec_backend_samplerate)) {
++        backend_change = true;
++        ALOGW("Codec backend needs to be updated");
++    }
++
++    return backend_change;
++}
++
++bool platform_check_and_set_codec_backend_cfg(struct audio_device* adev, struct audio_usecase *usecase)
++{
++    ALOGV("platform_check_and_set_codec_backend_cfg usecase = %d",usecase->id );
++
++    unsigned int new_bit_width = 0, old_bit_width;
++    unsigned int new_sample_rate = 0, old_sample_rate;
++
++    old_bit_width = adev->cur_codec_backend_bit_width;
++    old_sample_rate = adev->cur_codec_backend_samplerate;
++
++    ALOGW("Codec backend bitwidth %d, samplerate %d", old_bit_width, old_sample_rate);
++    if (platform_check_codec_backend_cfg(adev, usecase,
++                                      &new_bit_width, &new_sample_rate)) {
++        platform_set_codec_backend_cfg(adev, new_bit_width, new_sample_rate);
++    }
++
++    if (old_bit_width != adev->cur_codec_backend_bit_width ||
++        old_sample_rate != adev->cur_codec_backend_samplerate) {
++        ALOGW("New codec backend bit width %d, sample rate %d",
++                    adev->cur_codec_backend_bit_width, adev->cur_codec_backend_samplerate);
++        return true;
++    }
++
++    return false;
+ }
+diff --git a/hal/msm8916/platform.h b/hal/msm8916/platform.h
+index a31fa31..f723a4a 100644
+--- a/hal/msm8916/platform.h
++++ b/hal/msm8916/platform.h
+@@ -181,7 +181,7 @@ enum {
+  * the buffer size of an input/output stream
+  */
+ #define DEEP_BUFFER_OUTPUT_PERIOD_SIZE 960
+-#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 4
++#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 5
+ #define LOW_LATENCY_OUTPUT_PERIOD_SIZE 240
+ #define LOW_LATENCY_OUTPUT_PERIOD_COUNT 2
+ 
+-- 
+2.7.4
+
+
+From ccd6662b8118a9eece15fccf1b4b46b93d827403 Mon Sep 17 00:00:00 2001
+From: Steve Kondik <shade@chemlab.org>
+Date: Mon, 21 Jul 2014 11:48:30 -0700
+Subject: [PATCH 10/18] hal: Featureize FLAC offload support
+
+ * Not all devices will have this code in the DSP, let alone the kernel.
+ * Featurize it, but leave the codec bit width and sample rate controls
+   in place so that 24-bit PCM offload still works.
+ * Enable by default.
+
+Change-Id: I6e156048906a2b638e9ec4a083755536a14e161f
+---
+ hal/Android.mk              | 5 +++++
+ hal/audio_extn/audio_extn.c | 2 ++
+ hal/audio_hw.c              | 6 ++++++
+ 3 files changed, 13 insertions(+)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 666a923..066e15e 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -208,6 +208,11 @@ ifneq ($(strip $(DOLBY_DDP)),true)
+         LOCAL_SRC_FILES += audio_extn/dolby.c
+     endif
+ endif
++
++ifneq ($(strip $(AUDIO_FEATURE_ENABLED_FLAC_OFFLOAD)),false)
++    LOCAL_CFLAGS += -DFLAC_OFFLOAD_ENABLED
++endif
++
+ endif
+ 
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SPLIT_A2DP)),true)
+diff --git a/hal/audio_extn/audio_extn.c b/hal/audio_extn/audio_extn.c
+index 0c14c74..4554a71 100644
+--- a/hal/audio_extn/audio_extn.c
++++ b/hal/audio_extn/audio_extn.c
+@@ -606,6 +606,7 @@ int audio_extn_parse_compress_metadata(struct stream_out *out,
+     char value[32];
+ 
+     if (out->format == AUDIO_FORMAT_FLAC) {
++#ifdef FLAC_OFFLOAD_ENABLED
+         ret = str_parms_get_str(parms, AUDIO_OFFLOAD_CODEC_FLAC_MIN_BLK_SIZE, value, sizeof(value));
+         if (ret >= 0) {
+             out->compr_config.codec->options.flac_dec.min_blk_size = atoi(value);
+@@ -631,6 +632,7 @@ int audio_extn_parse_compress_metadata(struct stream_out *out,
+               out->compr_config.codec->options.flac_dec.max_blk_size,
+               out->compr_config.codec->options.flac_dec.min_frame_size,
+               out->compr_config.codec->options.flac_dec.max_frame_size);
++#endif
+     }
+ 
+     else if (out->format == AUDIO_FORMAT_ALAC) {
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 91bf9fc..38f97d6 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -270,7 +270,9 @@ static bool is_supported_format(audio_format_t format)
+         format == AUDIO_FORMAT_AAC_HE_V2 ||
+         format == AUDIO_FORMAT_PCM_16_BIT_OFFLOAD ||
+         format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD ||
++#ifdef FLAC_OFFLOAD_ENABLED
+         format == AUDIO_FORMAT_FLAC ||
++#endif
+         format == AUDIO_FORMAT_ALAC ||
+         format == AUDIO_FORMAT_APE ||
+         format == AUDIO_FORMAT_VORBIS ||
+@@ -295,9 +297,11 @@ static int get_snd_codec_id(audio_format_t format)
+     case AUDIO_FORMAT_PCM_OFFLOAD:
+         id = SND_AUDIOCODEC_PCM;
+         break;
++#ifdef FLAC_OFFLOAD_ENABLED
+     case AUDIO_FORMAT_FLAC:
+         id = SND_AUDIOCODEC_FLAC;
+         break;
++#endif
+     case AUDIO_FORMAT_ALAC:
+         id = SND_AUDIOCODEC_ALAC;
+         break;
+@@ -2770,8 +2774,10 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         if (out->bit_width == 24)
+             out->compr_config.codec->format = SNDRV_PCM_FORMAT_S24_LE;
+ 
++#ifdef FLAC_OFFLOAD_ENABLED
+         if (config->offload_info.format == AUDIO_FORMAT_FLAC)
+             out->compr_config.codec->options.flac_dec.sample_size = PCM_OUTPUT_BIT_WIDTH;
++#endif
+ 
+         if (flags & AUDIO_OUTPUT_FLAG_NON_BLOCKING)
+             out->non_blocking = 1;
+-- 
+2.7.4
+
+
+From ef5b6662f2caf9e9f73f9c247b6074663d1ad1ca Mon Sep 17 00:00:00 2001
+From: Scott Mertz <scott@cyngn.com>
+Date: Wed, 25 Feb 2015 00:49:30 -0800
+Subject: [PATCH 11/18] msm8916: set source on adev_open_input_stream
+
+- Fixes FM recording where the app chooses the
+  AUDIO_SOURCE_FM_RX source.  In this case, the
+  HAL was being set to configure for the
+  AUDIO_SOURCE_DEFAULT source, which selects
+  the wrong input device in platform_get_input_snd_device.
+
+Change-Id: Ic52679404664b5a2ce3e3433cd6296df78803f30
+---
+ hal/audio_hw.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 38f97d6..a374363 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -3237,7 +3237,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+                                   struct audio_stream_in **stream_in,
+                                   audio_input_flags_t flags __unused,
+                                   const char *address __unused,
+-                                  audio_source_t source __unused)
++                                  audio_source_t source)
+ {
+     struct audio_device *adev = (struct audio_device *)dev;
+     struct stream_in *in;
+@@ -3279,7 +3279,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+     in->stream.get_input_frames_lost = in_get_input_frames_lost;
+ 
+     in->device = devices;
+-    in->source = AUDIO_SOURCE_DEFAULT;
++    in->source = source;
+     in->dev = adev;
+     in->standby = 1;
+     in->channel_mask = config->channel_mask;
+-- 
+2.7.4
+
+
+From 3214323362e4b754f1bfb1b2834a743484beaa74 Mon Sep 17 00:00:00 2001
+From: Alexy Joseph <alexyj@codeaurora.org>
+Date: Tue, 3 Mar 2015 19:01:03 -0800
+Subject: [PATCH 12/18] hal: Reduce offload latency and log spam
+
+Offload latency is set to 96. Change
+it to 50 to reflect the rendering latency more correctly
+Modify pcm offload latency to return offload
+latency rather than the latency based on buffering
+since volume is applied immediately for offload use
+cases. Also reduce log spam in offload use cases
+
+Change-Id: If28d49d66e8f989074c4c7eaec523855e9f4290a
+CRs-Fixed: 787448
+---
+ hal/audio_hw.c | 12 +++---------
+ 1 file changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index a374363..835b485 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -58,7 +58,7 @@
+ 
+ #define COMPRESS_OFFLOAD_NUM_FRAGMENTS 4
+ /* ToDo: Check and update a proper value in msec */
+-#define COMPRESS_OFFLOAD_PLAYBACK_LATENCY 96
++#define COMPRESS_OFFLOAD_PLAYBACK_LATENCY 50
+ #define COMPRESS_PLAYBACK_VOLUME_MAX 0x2000
+ 
+ #define PROXY_OPEN_RETRY_COUNT           100
+@@ -1938,13 +1938,7 @@ static uint32_t out_get_latency(const struct audio_stream_out *stream)
+     uint32_t latency = 0;
+ 
+     if (is_offload_usecase(out->usecase)) {
+-        if (out->use_small_bufs == true)
+-            latency = ((out->compr_config.fragments *
+-                   out->compr_config.fragment_size * 1000) /
+-                   (out->sample_rate * out->compr_config.codec->ch_in *
+-                   audio_bytes_per_sample(out->format)));
+-        else
+-            latency = COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
++        latency = COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
+     } else {
+         latency = (out->config.period_count * out->config.period_size * 1000) /
+            (out->config.rate);
+@@ -2032,7 +2026,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
+     }
+ 
+     if (is_offload_usecase(out->usecase)) {
+-        ALOGD("copl(%p): writing buffer (%zu bytes) to compress device", out, bytes);
++        ALOGVV("copl(%p): writing buffer (%zu bytes) to compress device", out, bytes);
+         if (out->send_new_metadata) {
+             ALOGD("copl(%p):send new gapless metadata", out);
+             compress_set_gapless_metadata(out->compr, &out->gapless_mdata);
+-- 
+2.7.4
+
+
+From 4f43514ae3a791c1af7dd256082e37fb32e0b782 Mon Sep 17 00:00:00 2001
+From: Eric Laurent <elaurent@google.com>
+Date: Thu, 23 Oct 2014 14:42:59 -0700
+Subject: [PATCH 13/18] compress offload: use new sample rate representation.
+
+Pass directly the sample rate value to struct snd_codec
+instead of the ALSA enum.
+
+Bug: 17398311.
+Change-Id: I79483773807ce3b0b146fde28d6498444c69fe89
+---
+ hal/Android.mk | 2 +-
+ hal/audio_hw.c | 5 +++++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 066e15e..9ba6fb8 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -119,7 +119,7 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_COMPRESS_CAPTURE)),true)
+     LOCAL_SRC_FILES += audio_extn/compress_capture.c
+ endif
+ 
+-ifneq ($(strip $(AUDIO_FEATURE_ENABLED_NEW_SAMPLE_RATE)),false)
++ifeq ($(strip $(AUDIO_FEATURE_ENABLED_NEW_SAMPLE_RATE)),true)
+     LOCAL_CFLAGS += -DNEW_SAMPLE_RATE_ENABLED
+ endif
+ 
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 835b485..af16939 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -2749,8 +2749,13 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+                        platform_get_compress_offload_buffer_size(&config->offload_info);
+         }
+         out->compr_config.fragments = COMPRESS_OFFLOAD_NUM_FRAGMENTS;
++#ifdef NEW_SAMPLE_RATE_ENABLED
+         out->compr_config.codec->sample_rate =
+                     config->offload_info.sample_rate;
++#else
++        out->compr_config.codec->sample_rate =
++                    compress_get_alsa_rate(config->offload_info.sample_rate);
++#endif
+         out->compr_config.codec->bit_rate =
+                     config->offload_info.bit_rate;
+         out->compr_config.codec->ch_in =
+-- 
+2.7.4
+
+
+From af40ad6cbac601a304d9461e32b1287f2ea22111 Mon Sep 17 00:00:00 2001
+From: Rashed Abdel-Tawab <rashed@linux.com>
+Date: Tue, 13 Oct 2015 07:20:49 +0000
+Subject: [PATCH 14/18] hal: Back out use_small_bufs
+
+This reverts commit 77dfe59590d0ed4d12fd6e6638349f3aabc14beb.
+
+Conflicts:
+	hal/audio_hw.c
+
+Change-Id: Ib6011f45d7db7529c7f037e41a121f7338d1b9cf
+---
+ hal/audio_hw.c         | 24 ++++--------------------
+ hal/audio_hw.h         |  1 -
+ hal/msm8916/platform.c | 17 ++++++-----------
+ hal/msm8974/platform.c | 46 +++++++++++++++++++++++-----------------------
+ 4 files changed, 33 insertions(+), 55 deletions(-)
+
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index af16939..92db0f1 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -1935,17 +1935,12 @@ static char* out_get_parameters(const struct audio_stream *stream, const char *k
+ static uint32_t out_get_latency(const struct audio_stream_out *stream)
+ {
+     struct stream_out *out = (struct stream_out *)stream;
+-    uint32_t latency = 0;
+ 
+-    if (is_offload_usecase(out->usecase)) {
+-        latency = COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
+-    } else {
+-        latency = (out->config.period_count * out->config.period_size * 1000) /
+-           (out->config.rate);
+-    }
++    if (is_offload_usecase(out->usecase))
++        return COMPRESS_OFFLOAD_PLAYBACK_LATENCY;
+ 
+-    ALOGV("%s: Latency %d", __func__, latency);
+-    return latency;
++    return (out->config.period_count * out->config.period_size * 1000) /
++           (out->config.rate);
+ }
+ 
+ static int out_set_volume(struct audio_stream_out *stream, float left,
+@@ -2655,8 +2650,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     out->supported_channel_masks[0] = AUDIO_CHANNEL_OUT_STEREO;
+     out->handle = handle;
+     out->bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
+-    out->non_blocking = 0;
+-    out->use_small_bufs = false;
+ 
+     /* Init use case and pcm_config */
+     if ((out->flags == AUDIO_OUTPUT_FLAG_DIRECT) &&
+@@ -2781,15 +2774,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         if (flags & AUDIO_OUTPUT_FLAG_NON_BLOCKING)
+             out->non_blocking = 1;
+ 
+-        if (config->offload_info.use_small_bufs) {
+-            //this flag is set from framework only if its for PCM formats
+-            //no need to check for PCM format again
+-            out->non_blocking = 0;
+-            out->use_small_bufs = true;
+-            ALOGI("Keep write blocking for small buff: non_blockling %d",
+-                  out->non_blocking);
+-        }
+-
+         out->send_new_metadata = 1;
+         out->offload_state = OFFLOAD_STATE_IDLE;
+         out->playback_started = 0;
+diff --git a/hal/audio_hw.h b/hal/audio_hw.h
+index 5cada3a..7efc82b 100644
+--- a/hal/audio_hw.h
++++ b/hal/audio_hw.h
+@@ -182,7 +182,6 @@ struct stream_out {
+     struct stream_app_type_cfg app_type_cfg;
+ 
+     int non_blocking;
+-    bool use_small_bufs;
+     int playback_started;
+     int offload_state;
+     pthread_cond_t offload_cond;
+diff --git a/hal/msm8916/platform.c b/hal/msm8916/platform.c
+index 4ac2b13..cc528c6 100644
+--- a/hal/msm8916/platform.c
++++ b/hal/msm8916/platform.c
+@@ -3047,17 +3047,12 @@ uint32_t platform_get_pcm_offload_buffer_size(audio_offload_info_t* info)
+     if (info->format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD) {
+         bits_per_sample = 32;
+     }
+-
+-    if (info->use_small_bufs) {
+-        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
+-    } else {
+-        if (!info->has_video) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_MAX;
+-        } else if (info->has_video && info->is_streaming) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING;
+-        } else if (info->has_video) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV;
+-        }
++    if (!info->has_video) {
++        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_MAX;
++    } else if (info->has_video && info->is_streaming) {
++        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING;
++    } else if (info->has_video) {
++        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV;
+     }
+ 
+     //duration is set to 20 ms worth of stereo data at 48Khz
+diff --git a/hal/msm8974/platform.c b/hal/msm8974/platform.c
+index dc4627d..8c65d47 100644
+--- a/hal/msm8974/platform.c
++++ b/hal/msm8974/platform.c
+@@ -56,8 +56,6 @@
+ /* Used in calculating fragment size for pcm offload */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV 1000 /* 1 sec */
+ #define PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING 80 /* 80 millisecs */
+-#define PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS 20 /* 20 millisecs */
+-#define PCM_OFFLOAD_BUFFER_DURATION_MAX 1200  /* 1200 millisecs */
+ 
+ /* MAX PCM fragment size cannot be increased  further due
+  * to flinger's cblk size of 1mb,and it has to be a multiple of
+@@ -2743,42 +2741,44 @@ uint32_t platform_get_compress_offload_buffer_size(audio_offload_info_t* info)
+ 
+ uint32_t platform_get_pcm_offload_buffer_size(audio_offload_info_t* info)
+ {
+-    uint32_t fragment_size = 0;
++    uint32_t fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
+     uint32_t bits_per_sample = 16;
+-    uint32_t pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
+ 
+     if (info->format == AUDIO_FORMAT_PCM_24_BIT_OFFLOAD) {
+         bits_per_sample = 32;
+     }
+ 
+-    if (info->use_small_bufs) {
+-        pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_SMALL_BUFFERS;
+-    } else {
+-        if (!info->has_video) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_MAX;
+-        } else if (info->has_video && info->is_streaming) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING;
+-        } else if (info->has_video) {
+-            pcm_offload_time = PCM_OFFLOAD_BUFFER_DURATION_FOR_AV;
+-        }
++    if (!info->has_video) {
++        fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
++
++    } else if (info->has_video && info->is_streaming) {
++        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV_STREAMING
++                                     * info->sample_rate
++                                     * (bits_per_sample >> 3)
++                                     * popcount(info->channel_mask))/1000;
++
++    } else if (info->has_video) {
++        fragment_size = (PCM_OFFLOAD_BUFFER_DURATION_FOR_AV
++                                     * info->sample_rate
++                                     * (bits_per_sample >> 3)
++                                     * popcount(info->channel_mask))/1000;
+     }
+ 
+-    //duration is set to 20 ms worth of stereo data at 48Khz
+-    //with 16 bit per sample, modify this when the channel
+-    //configuration is different
+-    fragment_size = (pcm_offload_time
+-                     * info->sample_rate
+-                     * (bits_per_sample >> 3)
+-                     * popcount(info->channel_mask))/1000;
++    char value[PROPERTY_VALUE_MAX] = {0};
++    if((property_get("audio.offload.pcm.buffer.size", value, "")) &&
++            atoi(value)) {
++        fragment_size =  atoi(value) * 1024;
++        ALOGV("Using buffer size from sys prop %d", fragment_size);
++    }
+ 
+-    fragment_size = ALIGN (fragment_size, 1024);
++    fragment_size = ALIGN( fragment_size, 1024);
+ 
+     if(fragment_size < MIN_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MIN_PCM_OFFLOAD_FRAGMENT_SIZE;
+     else if(fragment_size > MAX_PCM_OFFLOAD_FRAGMENT_SIZE)
+         fragment_size = MAX_PCM_OFFLOAD_FRAGMENT_SIZE;
+ 
+-    ALOGI("PCM offload Fragment size to %d bytes", fragment_size);
++    ALOGV("%s: fragment_size %d", __func__, fragment_size);
+     return fragment_size;
+ }
+ 
+-- 
+2.7.4
+
+
+From 3a0b810afe75e0f2d5cf0e9df1bc6ad6bf13d179 Mon Sep 17 00:00:00 2001
+From: Eric Laurent <elaurent@google.com>
+Date: Fri, 19 Jun 2015 16:30:44 -0700
+Subject: [PATCH 15/18] audio HAL: fix thread starvation
+
+Fix thread starvation issue where the capture or playback threads
+running in FIFO priority would constantly acquire the stream mutex preventing
+other threads to complete routing commands.
+
+Bug: 21880828.
+Change-Id: I99fcbb94da8f918f63b31e5bf713f3456a735869
+---
+ hal/audio_hw.c | 51 ++++++++++++++++++++++++++++++++++-----------------
+ hal/audio_hw.h |  2 ++
+ 2 files changed, 36 insertions(+), 17 deletions(-)
+
+diff --git a/hal/audio_hw.c b/hal/audio_hw.c
+index 92db0f1..e7602b7 100644
+--- a/hal/audio_hw.c
++++ b/hal/audio_hw.c
+@@ -1103,6 +1103,20 @@ error_config:
+     return ret;
+ }
+ 
++void lock_input_stream(struct stream_in *in)
++{
++    pthread_mutex_lock(&in->pre_lock);
++    pthread_mutex_lock(&in->lock);
++    pthread_mutex_unlock(&in->pre_lock);
++}
++
++void lock_output_stream(struct stream_out *out)
++{
++    pthread_mutex_lock(&out->pre_lock);
++    pthread_mutex_lock(&out->lock);
++    pthread_mutex_unlock(&out->pre_lock);
++}
++
+ /* must be called with out->lock locked */
+ static int send_offload_cmd_l(struct stream_out* out, int command)
+ {
+@@ -1191,7 +1205,7 @@ static void *offload_thread_loop(void *context)
+     prctl(PR_SET_NAME, (unsigned long)"Offload Callback", 0, 0, 0);
+ 
+     ALOGV("%s", __func__);
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+     for (;;) {
+         struct offload_cmd *cmd = NULL;
+         stream_callback_event_t event;
+@@ -1268,7 +1282,7 @@ static void *offload_thread_loop(void *context)
+             ALOGE("%s unknown command received: %d", __func__, cmd->cmd);
+             break;
+         }
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         out->offload_thread_blocked = false;
+         pthread_cond_signal(&out->cond);
+         if (send_callback) {
+@@ -1299,7 +1313,7 @@ static int create_offload_callback_thread(struct stream_out *out)
+ 
+ static int destroy_offload_callback_thread(struct stream_out *out)
+ {
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+     stop_compressed_output_l(out);
+     send_offload_cmd_l(out, OFFLOAD_CMD_EXIT);
+ 
+@@ -1703,7 +1717,7 @@ static int out_standby(struct audio_stream *stream)
+         return 0;
+     }
+ 
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+     if (!out->standby) {
+         pthread_mutex_lock(&adev->lock);
+         out->standby = true;
+@@ -1811,7 +1825,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+     err = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING, value, sizeof(value));
+     if (err >= 0) {
+         val = atoi(value);
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         pthread_mutex_lock(&adev->lock);
+ 
+         /*
+@@ -1985,7 +1999,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
+     int snd_scard_state = get_snd_card_state(adev);
+     ssize_t ret = 0;
+ 
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+ 
+     if (SND_CARD_STATE_OFFLINE == snd_scard_state) {
+         // increase written size during SSR to avoid mismatch
+@@ -2102,7 +2116,7 @@ static int out_get_render_position(const struct audio_stream_out *stream,
+     *dsp_frames = 0;
+     if (is_offload_usecase(out->usecase)) {
+         ssize_t ret = 0;
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         if (out->compr != NULL) {
+             ret = compress_get_tstamp(out->compr, (unsigned long *)dsp_frames,
+                     &out->sample_rate);
+@@ -2161,7 +2175,7 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
+     int ret = -1;
+     unsigned long dsp_frames;
+ 
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+ 
+     if (is_offload_usecase(out->usecase)) {
+         if (out->compr != NULL) {
+@@ -2213,7 +2227,7 @@ static int out_set_callback(struct audio_stream_out *stream,
+     struct stream_out *out = (struct stream_out *)stream;
+ 
+     ALOGV("%s", __func__);
+-    pthread_mutex_lock(&out->lock);
++    lock_output_stream(out);
+     out->offload_callback = callback;
+     out->offload_cookie = cookie;
+     pthread_mutex_unlock(&out->lock);
+@@ -2227,7 +2241,7 @@ static int out_pause(struct audio_stream_out* stream)
+     ALOGV("%s", __func__);
+     if (is_offload_usecase(out->usecase)) {
+         ALOGD("copl(%p):pause compress driver", out);
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         if (out->compr != NULL && out->offload_state == OFFLOAD_STATE_PLAYING) {
+             struct audio_device *adev = out->dev;
+             int snd_scard_state = get_snd_card_state(adev);
+@@ -2250,7 +2264,7 @@ static int out_resume(struct audio_stream_out* stream)
+     if (is_offload_usecase(out->usecase)) {
+         ALOGD("copl(%p):resume compress driver", out);
+         status = 0;
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         if (out->compr != NULL && out->offload_state == OFFLOAD_STATE_PAUSED) {
+             struct audio_device *adev = out->dev;
+             int snd_scard_state = get_snd_card_state(adev);
+@@ -2271,7 +2285,7 @@ static int out_drain(struct audio_stream_out* stream, audio_drain_type_t type )
+     int status = -ENOSYS;
+     ALOGV("%s", __func__);
+     if (is_offload_usecase(out->usecase)) {
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         if (type == AUDIO_DRAIN_EARLY_NOTIFY)
+             status = send_offload_cmd_l(out, OFFLOAD_CMD_PARTIAL_DRAIN);
+         else
+@@ -2287,7 +2301,7 @@ static int out_flush(struct audio_stream_out* stream)
+     ALOGV("%s", __func__);
+     if (is_offload_usecase(out->usecase)) {
+         ALOGD("copl(%p):calling compress flush", out);
+-        pthread_mutex_lock(&out->lock);
++        lock_output_stream(out);
+         stop_compressed_output_l(out);
+         pthread_mutex_unlock(&out->lock);
+         ALOGD("copl(%p):out of compress flush", out);
+@@ -2359,7 +2373,7 @@ static int in_standby(struct audio_stream *stream)
+         return status;
+     }
+ 
+-    pthread_mutex_lock(&in->lock);
++    lock_input_stream(in);
+     if (!in->standby && in->is_st_session) {
+         ALOGD("%s: sound trigger pcm stop lab", __func__);
+         audio_extn_sound_trigger_stop_lab(in);
+@@ -2401,7 +2415,8 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+ 
+     if (!parms)
+         goto error;
+-    pthread_mutex_lock(&in->lock);
++    lock_input_stream(in);
++
+     pthread_mutex_lock(&adev->lock);
+ 
+     err = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_INPUT_SOURCE, value, sizeof(value));
+@@ -2484,7 +2499,7 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer,
+     int ret = -1;
+     int snd_scard_state = get_snd_card_state(adev);
+ 
+-    pthread_mutex_lock(&in->lock);
++    lock_input_stream(in);
+ 
+     if (in->pcm) {
+         if(SND_CARD_STATE_OFFLINE == snd_scard_state) {
+@@ -2571,7 +2586,7 @@ static int add_remove_audio_effect(const struct audio_stream *stream,
+     if (status != 0)
+         return status;
+ 
+-    pthread_mutex_lock(&in->lock);
++    lock_input_stream(in);
+     pthread_mutex_lock(&in->dev->lock);
+     if ((in->source == AUDIO_SOURCE_VOICE_COMMUNICATION) &&
+             in->enable_aec != enable &&
+@@ -2906,6 +2921,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     /* out->written = 0; by calloc() */
+ 
+     pthread_mutex_init(&out->lock, (const pthread_mutexattr_t *) NULL);
++    pthread_mutex_init(&out->pre_lock, (const pthread_mutexattr_t *) NULL);
+     pthread_cond_init(&out->cond, (const pthread_condattr_t *) NULL);
+ 
+     config->format = out->stream.common.get_format(&out->stream.common);
+@@ -3244,6 +3260,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+         devices, &in->stream, handle);
+ 
+     pthread_mutex_init(&in->lock, (const pthread_mutexattr_t *) NULL);
++    pthread_mutex_init(&in->pre_lock, (const pthread_mutexattr_t *) NULL);
+ 
+     in->stream.common.get_sample_rate = in_get_sample_rate;
+     in->stream.common.set_sample_rate = in_set_sample_rate;
+diff --git a/hal/audio_hw.h b/hal/audio_hw.h
+index 7efc82b..c4d42ae 100644
+--- a/hal/audio_hw.h
++++ b/hal/audio_hw.h
+@@ -161,6 +161,7 @@ struct stream_app_type_cfg {
+ struct stream_out {
+     struct audio_stream_out stream;
+     pthread_mutex_t lock; /* see note below on mutex acquisition order */
++    pthread_mutex_t pre_lock; /* acquire before lock to avoid DOS by playback thread */
+     pthread_cond_t  cond;
+     struct pcm_config config;
+     struct compr_config compr_config;
+@@ -201,6 +202,7 @@ struct stream_out {
+ struct stream_in {
+     struct audio_stream_in stream;
+     pthread_mutex_t lock; /* see note below on mutex acquisition order */
++    pthread_mutex_t pre_lock; /* acquire before lock to avoid DOS by capture thread */
+     struct pcm_config config;
+     struct pcm *pcm;
+     int standby;
+-- 
+2.7.4
+
+
+From 61c92c91e0a12a856383ad0e880a094f7bfe8246 Mon Sep 17 00:00:00 2001
+From: sooorajjj <sooraj.sizon@micromaxinfo.com>
+Date: Sat, 4 Feb 2017 19:16:00 +0530
+Subject: [PATCH 16/18] Fix : Derp!
+
+---
+ hal/Android.mk         | 2 +-
+ hal/msm8916/platform.c | 2 ++
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hal/Android.mk b/hal/Android.mk
+index 9ba6fb8..b4b8c08 100644
+--- a/hal/Android.mk
++++ b/hal/Android.mk
+@@ -91,7 +91,7 @@ endif
+ ifneq ($(strip $(AUDIO_FEATURE_ENABLED_MULTI_VOICE_SESSIONS)),false)
+     LOCAL_CFLAGS += -DMULTI_VOICE_SESSION_ENABLED
+     LOCAL_SRC_FILES += voice_extn/voice_extn.c
+-ifneq ($(strip $(AUDIO_FEATURE_ENABLED_INCALL_MUSIC)),false)
++ifeq ($(strip $(AUDIO_FEATURE_ENABLED_INCALL_MUSIC)),true)
+     LOCAL_CFLAGS += -DINCALL_MUSIC_ENABLED
+ endif
+ ifneq ($(strip $(AUDIO_FEATURE_ENABLED_COMPRESS_VOIP)),false)
+diff --git a/hal/msm8916/platform.c b/hal/msm8916/platform.c
+index cc528c6..f2c1890 100644
+--- a/hal/msm8916/platform.c
++++ b/hal/msm8916/platform.c
+@@ -3305,6 +3305,8 @@ int platform_set_channel_map(void *platform, int ch_count, char *ch_map, int snd
+               __func__, ret, ch_count);
+     }
+     return ret;
++}
++
+ static unsigned int get_best_backend_sample_rate(unsigned int sample_rate) {
+ 
+     // codec backend can take 48K, 96K, and 192K
+-- 
+2.7.4
+
+
+From 2c102924b76d5adee61680806ef731814a44cb00 Mon Sep 17 00:00:00 2001
+From: Scott Mertz <scott@cyngn.com>
+Date: Wed, 28 Jan 2015 18:06:26 -0800
+Subject: [PATCH 17/18] audio: implement additional platform info xml tags
+
+Change-Id: Idc3e77017f54167001e497c7e1a2ea86f8f6233f
+---
+ hal/msm8916/platform.c | 64 ++++++++++++++++++++++++++++----------------------
+ 1 file changed, 36 insertions(+), 28 deletions(-)
+
+diff --git a/hal/msm8916/platform.c b/hal/msm8916/platform.c
+index f2c1890..64287cf 100644
+--- a/hal/msm8916/platform.c
++++ b/hal/msm8916/platform.c
+@@ -1546,26 +1546,7 @@ done:
+ 
+ int platform_get_snd_device_index(char *snd_device_index_name)
+ {
+-    int ret = 0;
+-    int i;
+-
+-    if (snd_device_index_name == NULL) {
+-        ALOGE("%s: snd_device_index_name is NULL", __func__);
+-        ret = -ENODEV;
+-        goto done;
+-    }
+-
+-    for (i=0; i < SND_DEVICE_MAX; i++) {
+-        if(strcmp(snd_device_name_index[i].name, snd_device_index_name) == 0) {
+-            ret = snd_device_name_index[i].index;
+-            goto done;
+-        }
+-    }
+-    ALOGE("%s: Could not find index for snd_device_index_name = %s",
+-            __func__, snd_device_index_name);
+-    ret = -ENODEV;
+-done:
+-    return ret;
++    return find_index(snd_device_name_index, SND_DEVICE_MAX, snd_device_index_name);
+ }
+ 
+ int platform_set_fluence_type(void *platform, char *value)
+@@ -3084,21 +3065,48 @@ bool platform_check_24_bit_support() {
+     return true;
+ }
+ 
+-int platform_get_usecase_index(const char * usecase __unused)
++int platform_get_usecase_index(const char * usecase)
+ {
+-    return -ENOSYS;
++    return find_index(usecase_name_index, AUDIO_USECASE_MAX, usecase);
+ }
+ 
+-int platform_set_usecase_pcm_id(audio_usecase_t usecase __unused, int32_t type __unused,
+-                                int32_t pcm_id __unused)
++int platform_set_usecase_pcm_id(audio_usecase_t usecase, int32_t type,
++                                int32_t pcm_id)
+ {
+-    return -ENOSYS;
++    int ret = 0;
++    if ((usecase <= USECASE_INVALID) || (usecase >= AUDIO_USECASE_MAX)) {
++        ALOGE("%s: invalid usecase case idx %d", __func__, usecase);
++        ret = -EINVAL;
++        goto done;
++    }
++
++    if ((type != 0) && (type != 1)) {
++        ALOGE("%s: invalid usecase type", __func__);
++        ret = -EINVAL;
++    }
++    pcm_device_table[usecase][type] = pcm_id;
++done:
++    return ret;
+ }
+ 
+-int platform_set_snd_device_backend(snd_device_t snd_device __unused,
+-                                    const char * backend __unused)
++int platform_set_snd_device_backend(snd_device_t device,
++                                    const char * backend)
+ {
+-    return -ENOSYS;
++    int ret = 0;
++
++    if ((device < SND_DEVICE_MIN) || (device >= SND_DEVICE_MAX)) {
++        ALOGE("%s: Invalid snd_device = %d",
++            __func__, device);
++        ret = -EINVAL;
++        goto done;
++    }
++
++    if (backend_table[device]) {
++        free(backend_table[device]);
++    }
++    backend_table[device] = strdup(backend);
++done:
++    return ret;
+ }
+ 
+ int platform_get_subsys_image_name(char *buf)
+-- 
+2.7.4
+
+
+From 1d2e8fcc2dd1ec8cc8387806642e11f0a309aab7 Mon Sep 17 00:00:00 2001
+From: Scott Mertz <scott@cyngn.com>
+Date: Fri, 30 Jan 2015 11:45:15 -0800
+Subject: [PATCH 18/18] audio: implement backend platform parser
+
+Ported from msm8974 original patch
+
+Change-Id: I6be3870667daf5273db5e8fbb1aa39e5e14c1530
+---
+ hal/msm8916/platform.c | 84 +++++++++++++++++++++++++++++++-------------------
+ 1 file changed, 53 insertions(+), 31 deletions(-)
+
+diff --git a/hal/msm8916/platform.c b/hal/msm8916/platform.c
+index 64287cf..93a8421 100644
+--- a/hal/msm8916/platform.c
++++ b/hal/msm8916/platform.c
+@@ -970,6 +970,38 @@ void close_csd_client(struct csd_data *csd)
+     }
+ }
+ 
++static void set_platform_defaults()
++{
++    int32_t dev;
++    for (dev = 0; dev < SND_DEVICE_MAX; dev++) {
++        backend_table[dev] = NULL;
++    }
++    for (dev = 0; dev < SND_DEVICE_MAX; dev++) {
++        backend_bit_width_table[dev] = 16;
++    }
++
++    // TBD - do these go to the platform-info.xml file.
++    // will help in avoiding strdups here
++    backend_table[SND_DEVICE_IN_BT_SCO_MIC] = strdup("bt-sco");
++    backend_table[SND_DEVICE_IN_BT_SCO_MIC_WB] = strdup("bt-sco-wb");
++    backend_table[SND_DEVICE_IN_BT_SCO_MIC_NREC] = strdup("bt-sco");
++    backend_table[SND_DEVICE_IN_BT_SCO_MIC_WB_NREC] = strdup("bt-sco-wb");
++    backend_table[SND_DEVICE_OUT_BT_SCO] = strdup("bt-sco");
++    backend_table[SND_DEVICE_OUT_BT_SCO_WB] = strdup("bt-sco-wb");
++    backend_table[SND_DEVICE_OUT_BT_A2DP] = strdup("bt-a2dp");
++    backend_table[SND_DEVICE_OUT_SPEAKER_AND_BT_A2DP] =
++        strdup("speaker-and-bt-a2dp");
++    backend_table[SND_DEVICE_OUT_HDMI] = strdup("hdmi");
++    backend_table[SND_DEVICE_OUT_SPEAKER_AND_HDMI] = strdup("speaker-and-hdmi");
++    backend_table[SND_DEVICE_OUT_AFE_PROXY] = strdup("afe-proxy");
++    backend_table[SND_DEVICE_OUT_USB_HEADSET] = strdup("usb-headphones");
++    backend_table[SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET] =
++        strdup("speaker-and-usb-headphones");
++    backend_table[SND_DEVICE_IN_USB_HEADSET_MIC] = strdup("usb-headset-mic");
++    backend_table[SND_DEVICE_IN_CAPTURE_FM] = strdup("capture-fm");
++    backend_table[SND_DEVICE_OUT_TRANSMISSION_FM] = strdup("transmission-fm");
++}
++
+ void get_cvd_version(char *cvd_version, struct audio_device *adev)
+ {
+     struct mixer_ctl *ctl;
+@@ -1386,6 +1418,8 @@ void *platform_init(struct audio_device *adev)
+     }
+     audio_extn_pm_vote();
+ 
++    set_platform_defaults();
++
+ acdb_init_fail:
+     /* Initialize ACDB ID's */
+     platform_info_init(PLATFORM_INFO_XML_PATH);
+@@ -1419,6 +1453,14 @@ void platform_deinit(void *platform)
+     hw_info_deinit(my_data->hw_info);
+     close_csd_client(my_data->csd);
+ 
++    int32_t dev;
++    for (dev = 0; dev < SND_DEVICE_MAX; dev++) {
++        if (backend_table[dev]) {
++            free(backend_table[dev]);
++            backend_table[dev]= NULL;
++        }
++    }
++
+     free(platform);
+     /* deinit usb */
+     audio_extn_usb_deinit();
+@@ -1458,37 +1500,17 @@ int platform_get_snd_device_name_extn(void *platform, snd_device_t snd_device,
+ 
+ void platform_add_backend_name(char *mixer_path, snd_device_t snd_device)
+ {
+-    if ((snd_device == SND_DEVICE_IN_BT_SCO_MIC) ||
+-         (snd_device == SND_DEVICE_IN_BT_SCO_MIC_NREC))
+-        strlcat(mixer_path, " bt-sco", MIXER_PATH_MAX_LENGTH);
+-    else if ((snd_device == SND_DEVICE_IN_BT_SCO_MIC_WB) ||
+-              (snd_device == SND_DEVICE_IN_BT_SCO_MIC_WB_NREC))
+-        strlcat(mixer_path, " bt-sco-wb", MIXER_PATH_MAX_LENGTH);
+-    else if(snd_device == SND_DEVICE_OUT_BT_SCO)
+-        strlcat(mixer_path, " bt-sco", MIXER_PATH_MAX_LENGTH);
+-    else if(snd_device == SND_DEVICE_OUT_BT_A2DP)
+-        strlcat(mixer_path, " bt-a2dp", MIXER_PATH_MAX_LENGTH);
+-    else if(snd_device == SND_DEVICE_OUT_SPEAKER_AND_BT_A2DP)
+-        strlcat(mixer_path, " speaker-and-bt-a2dp", MIXER_PATH_MAX_LENGTH);
+-    else if(snd_device == SND_DEVICE_OUT_BT_SCO_WB)
+-        strlcat(mixer_path, " bt-sco-wb", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_HDMI)
+-        strlcat(mixer_path, " hdmi", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_SPEAKER_AND_HDMI)
+-        strlcat(mixer_path, " speaker-and-hdmi", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_AFE_PROXY)
+-        strlcat(mixer_path, " afe-proxy", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_USB_HEADSET)
+-        strlcat(mixer_path, " usb-headphones", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET)
+-        strlcat(mixer_path, " speaker-and-usb-headphones",
+-                MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_IN_USB_HEADSET_MIC)
+-        strlcat(mixer_path, " usb-headset-mic", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_IN_CAPTURE_FM)
+-        strlcat(mixer_path, " capture-fm", MIXER_PATH_MAX_LENGTH);
+-    else if (snd_device == SND_DEVICE_OUT_TRANSMISSION_FM)
+-        strlcat(mixer_path, " transmission-fm", MIXER_PATH_MAX_LENGTH);
++    if ((snd_device < SND_DEVICE_MIN) || (snd_device >= SND_DEVICE_MAX)) {
++        ALOGE("%s: Invalid snd_device = %d", __func__, snd_device);
++        return;
++    }
++
++    const char * suffix = backend_table[snd_device];
++
++    if (suffix != NULL) {
++        strlcat(mixer_path, " ", MIXER_PATH_MAX_LENGTH);
++        strlcat(mixer_path, suffix, MIXER_PATH_MAX_LENGTH);
++    }
+ }
+ 
+ int platform_get_pcm_device_id(audio_usecase_t usecase, int device_type)
+-- 
+2.7.4
+
