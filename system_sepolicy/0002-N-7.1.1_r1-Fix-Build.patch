@@ -1,0 +1,48 @@
+From dad20f0c5e450f25cc3f0ebf4df072ffbe31fa44 Mon Sep 17 00:00:00 2001
+From: sooorajjj <sooorajjj@gmail.com>
+Date: Tue, 7 Feb 2017 17:46:38 +0530
+Subject: [PATCH] N-7.1.1_r1 : Fix Build!
+
+---
+ Android.mk | 1 +
+ camera.te  | 2 --
+ domain.te  | 2 +-
+ 3 files changed, 2 insertions(+), 3 deletions(-)
+ delete mode 100644 camera.te
+
+diff --git a/Android.mk b/Android.mk
+index aa28ffb..82e88dc 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -96,6 +96,7 @@ $(sepolicy_policy.conf): $(call build_policy, $(sepolicy_build_files))
+ 		-D mls_num_sens=$(PRIVATE_MLS_SENS) -D mls_num_cats=$(PRIVATE_MLS_CATS) \
+ 		-D target_build_variant=$(TARGET_BUILD_VARIANT) \
+ 		-D target_has_legacy_camera_hal1=$(TARGET_HAS_LEGACY_CAMERA_HAL1) \
++		-D aosp_device=$(TARGET_PRODUCT) \
+ 		-s $^ > $@
+ 	$(hide) sed '/dontaudit/d' $@ > $@.dontaudit
+ 
+diff --git a/camera.te b/camera.te
+deleted file mode 100644
+index 2e2f519..0000000
+--- a/camera.te
++++ /dev/null
+@@ -1,2 +0,0 @@
+-# camera
+-type camera, domain;
+diff --git a/domain.te b/domain.te
+index abf27b9..806e13e 100644
+--- a/domain.te
++++ b/domain.te
+@@ -492,7 +492,7 @@ neverallow {
+ 
+ # Only domains spawned from zygote and runas may have the appdomain attribute.
+ neverallow { domain -runas -zygote } {
+-  appdomain -shell userdebug_or_eng(`-su -sudaemon -qti-testscripts') -bluetooth
++  appdomain -shell userdebug_or_eng(`-su -qti-testscripts') -bluetooth
+ }:process { transition dyntransition };
+ 
+ # Minimize read access to shell- or app-writable symlinks.
+-- 
+2.7.4
+
