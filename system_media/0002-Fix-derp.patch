@@ -1,0 +1,35 @@
+From e53bc895b8659fb4a378378f9e1104c8045fd7a2 Mon Sep 17 00:00:00 2001
+From: sooorajjj <sooorajjj@gmail.com>
+Date: Tue, 7 Feb 2017 17:02:37 +0530
+Subject: [PATCH] Fix Derp!
+
+---
+ audio/include/system/audio.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/audio/include/system/audio.h b/audio/include/system/audio.h
+index baa3481..3809fde 100644
+--- a/audio/include/system/audio.h
++++ b/audio/include/system/audio.h
+@@ -339,7 +339,7 @@ typedef enum {
+     AUDIO_FORMAT_APTX                = 0x21000000UL,
+     AUDIO_FORMAT_APTX_HD             = 0x22000000UL,
+ #endif
+-
++    AUDIO_FORMAT_MAIN_MASK           = 0xFF000000UL,/* Deprecated. Use audio_get_main_format() */
+     AUDIO_FORMAT_SUB_MASK            = 0x00FFFFFFUL,
+ 
+     /* Aliases */
+@@ -1617,8 +1617,8 @@ static inline bool audio_is_valid_format(audio_format_t format)
+                 format != AUDIO_FORMAT_PCM_24_BIT_OFFLOAD) {
+             return false;
+         }
+-        return true;
+ #endif
++        return true;
+     default:
+         return false;
+     }
+-- 
+2.7.4
+
