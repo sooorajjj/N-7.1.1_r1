@@ -1,0 +1,3543 @@
+From 956edc60764204c7614963b98b6a5676c4d3af81 Mon Sep 17 00:00:00 2001
+From: Matadeen Mishra <matade@codeaurora.org>
+Date: Wed, 23 Sep 2015 22:26:46 +0530
+Subject: [PATCH 01/11] Handling Authentication Failure From the lower layer
+
+Use case: DUT unable to do connect with all devices in
+Multipairing case.
+
+Steps:
+1. pair with HS
+2. disconnect HS.
+3. reconnect HS from DUT.
+
+Failure: Authentication failure occurred due to LMP
+transaction collision DUT not deleting link key which
+lead to unable to connect to device.
+
+Root Cause: Not posting the Authentication failure
+event to application layer, while removing the link-key.
+
+Fix: Post the Authentication failure event to application
+and removing the link-key.
+
+Change-Id: I079d8ce89c1fea66f0624127514cec8405bfdd3d
+
+Add null check to avoid exception after L2CAP psm assigned
+
+Use case: BT will get crash in SNS testing.
+
+steps: SNS testing BT ON/OFF.
+
+Failure: Crash is observed.
+
+Root Cause: If the number of supported services increased,
+larger service record array is required. Smaller array is
+resulting in out of record error causing L2CAP deregister.
+
+Fix: Check added to avoid null pointer exception if null
+is returned while fetching sock from id. Also cleanup of
+SDP and security records done during BT turning Off.
+
+Change-Id: I2e77127262119cabf2c372f894427dcdf3350e80
+
+Prevent crash due to second attempt to clean up eager_reader
+
+Null out the eager readers once they are cleaned up, so we
+don't try to clean them up later if an error occurs opening
+the HAL again later.
+
+Change-Id: I07df1010a1a619cb67b306d64e274d450234a002
+
+Remove bonded device information on pairing rejected
+
+Use Case: Remove bonded device information from the BTIF layer storage
+when authentication failed.
+
+Failure: Remote device appeared in the paired list after authentication
+failed.
+
+Steps:
+1. Create a connection from DUT to remote.
+2. Remove linkkey in remote.
+3. Create connection from DUT to remote, which is in paired list of
+DUT, Remote rejected the connection and authentication failed.
+But after BT OFF/ON, remote device appeared in the paired list
+
+Root Cause: Not removing device if remoted rejected the pairing
+request with reason pairing not allowed
+
+Fix: Remove bonded device information from the BTIF layer storage
+on rejected with pairing not allowed reason from remote
+
+Change-Id: Ic9e5e1ed70d304edd3dbca82a73833753fa0093c
+
+GAP: Save pin code length for incoming legacy SAP connection
+
+Use case: Carkit cannot reconnect to DUT in Sim Access Profile mode
+
+Steps:
+1. Pair with a car-kit (Agree all SAP, MAP, PBAP requests)
+2. Initiate disconnection on DUT
+3. Initiate re-connection on the car-kit.
+
+Failure: SAP profile reconnection failing as dut gives negetive
+linkkey reply.
+
+Root Cause: sec_flags not getting updated without pin len and stack
+triggering negative link key reply even linkkey is proper for 16 digit
+authentication of SAP.
+
+Fix: Save pin length during BTM_PINCodeReply.
+
+Change-Id: I8300dd3ff497058291143313b169190910e0a7c5
+
+Ignore pairing not allowed error when pairing in progress
+
+Use case: Pairing with both devices fails, when there is
+clash of pairing from 2 devices
+
+1. Create a link from Test tool to DUT. Remove bonding info in Test tool.
+2. Create a link from DUT to magic mouse. Unpair the link from DUT.
+3. Click on magic mouse, it creates a link, and we get a pairing
+   pop-up in DUT.
+4. Try to pair from Test tool to DUT.
+
+Failure: Pairing with mouse should success and other pairing
+should fail. But both pairing fails
+
+Root cause: Stack sending pairing not allowed error to upper layers
+for the second device when already pairing is in progress with
+some other device, which is impacting the existing pairing.
+
+Fix: Issue fixed by Ignore pairing not allowed error for the
+second device when already pairing is in progress with some
+other device.
+
+Change-Id: I20dbd70e7429505a580c9a20d40a8d92318f6c3e
+
+Handled delayed info response from remote during SDP
+
+Use case: DUT is not connecting to windows-7 tablet
+
+Failure: Connection is not successful with windows-7 tablet.
+
+Steps:
+1. Turn on BT on DUT
+2. Pair and connect from remote device.
+
+Root Cause: DUT initiates connection with out waiting for
+information response from remote device during SDP.
+
+Fix: DUT will not wait for information response from the
+remote during SDP.
+
+Change-Id: Iee0251f8f81923b1291983b66b31c78e14d21af0
+
+GAP: Update Paging and inquiry busy level seperately
+
+Use case:  Bluetooth Search Fail while ACL disconnection.
+
+Steps:
+1. Headset(HBS 760) connect
+2. Put Headset off
+3. BT Search Fail.
+
+Failure: BT search fail after disconnected Headset.
+
+Root cause: While updating the busy level of Paging or inquiry '10'
+was used as BL for paging and inquiry,this leads to
+1. Ignore the one of them when both of them are active.
+2. During ACL disconnection, unexpected inquiry busy level update.
+
+Fix: Sending unique busy level for paging related events and inquiry
+related events, so that each event will be notified.
+
+Change-Id: I7bddcb4901061c450555235717b7d49bab922ae8
+
+GAP Write 248 char name length to the chip while BT ON/OFF
+
+Use case: Remote device cannot see local name with 248 chars.
+
+steps:
+1. Turn on BT (Default name will come)
+2. Change local name to 248 chars
+   make sure DUT can be successfully searched from remote device.
+3. Turn off BT (or phone reboot)
+4. Turn on BT
+
+After step.4, the 248 chars name comes to GUI on MTP. However
+device search from remote device having DUT "Default name".
+
+Failure: Remote device cannot see local name with 248 chars.
+
+Root cause: DUT not supporting for the 248 char local name
+
+Fix: Writing the exact 248 character local name to the chip
+
+Change-Id: I702af8fa8d0affda509de7a9f17af8922e410286
+
+Failed to re-register APK Configuration for HDP
+
+Use case: register/unregister HDP from third party APK
+
+Test Steps:
+
+1.Install Any Test APK which internally registers/unregister the HDP.
+2.Run Test APK.
+3.Do initialization of Test APK which internally registers the HDP.
+4.Force stop the Test APK.
+5.And rerun the APK by going back test APK menu.
+6.Now it never perform the re-register the HDP as part of initialization.
+
+Root Cause: HDP registration related counter write operations are done
+in JNI main thread, and it's been referenced in BTIF thread.Sometimes,
+if the context switch to BTIF thread doesn't happen immediately after
+counter increment/decrement, it may not un-register the app if the
+counter becomes 0.
+
+Fix: Fixed it by making all operations related to counter in BTIF
+thread, so that de-registration happens for all HDP APPs.
+
+Change-Id: I71ace68a5f3d39d81b646f5f40c02ce56b9e93f0
+
+Added check for hci_layer status before processing function calls
+
+Use case: BT will get crash in SNS testing.
+
+Steps: SNS testing BT ON/OFF.
+
+Failure: Crash is observed.
+
+Root Cause: When hci_layer functions for transmit command and cleanup
+are called during hci_layer shutdown, they might try to access
+lists that are already cleared as part of shutdown process.
+
+Fix: Added check within functions to check for hci_layer state
+before processing.
+
+Change-Id: I8dbca9893e03dfc500886c5033a79976dc5d23e1
+
+Group BR-EDR related SDP variables under transport
+
+Use Case: Random RNR initiated after HOGP Keyboard disconnection.
+
+steps:
+1. keep madcatz in advertisement mode and scan, pair from DUT.
+2. keep dailog Keyboard in advertisement mode and scan, pair from DUT.
+3. Take Keyboard out of range to initiate disconnection from remote
+or initiate disconnection from remote.
+
+Failure: DUT trying to do RNR to random device.
+
+Root Cause: when the disconnection happened for LE device, it sets
+the wait_disc to true, that is causing random RNR to go for BR-EDR
+device.
+
+Fix: Group all BR-EDR related SDP variables under transport check
+so that if some other operation on LE will not corrupt these BR-EDR
+variables to mislead.
+
+Change-Id: Ic9003f2b85bbaaa30b201b8a639a9d9b52055ac5
+---
+ bta/dm/bta_dm_act.c        | 13 ++++++++-----
+ btif/src/btif_dm.c         |  3 ++-
+ btif/src/btif_hl.c         |  4 ++--
+ btif/src/btif_sock_l2cap.c | 14 ++++++++------
+ hci/src/hci_hal_h4.c       |  2 ++
+ hci/src/hci_hal_mct.c      |  4 ++++
+ hci/src/hci_layer.c        | 17 +++++++++++++++++
+ stack/btm/btm_acl.c        | 11 +++++++----
+ stack/btm/btm_sec.c        |  5 ++---
+ stack/include/btm_api.h    |  3 ++-
+ stack/l2cap/l2c_csm.c      |  2 +-
+ 11 files changed, 55 insertions(+), 23 deletions(-)
+
+diff --git a/bta/dm/bta_dm_act.c b/bta/dm/bta_dm_act.c
+index acda747..9c0d292 100644
+--- a/bta/dm/bta_dm_act.c
++++ b/bta/dm/bta_dm_act.c
+@@ -2312,10 +2312,12 @@ static void bta_dm_discover_device(BD_ADDR remote_bd_addr)
+             /* check whether connection already exists to the device
+                if connection exists, we don't have to wait for ACL
+                link to go down to start search on next device */
+-            if (BTM_IsAclConnectionUp(bta_dm_search_cb.peer_bdaddr, BT_TRANSPORT_BR_EDR))
+-                bta_dm_search_cb.wait_disc = FALSE;
+-            else
+-                bta_dm_search_cb.wait_disc = TRUE;
++            if (transport == BT_TRANSPORT_BR_EDR) {
++                if (BTM_IsAclConnectionUp(bta_dm_search_cb.peer_bdaddr, BT_TRANSPORT_BR_EDR))
++                    bta_dm_search_cb.wait_disc = FALSE;
++                else
++                    bta_dm_search_cb.wait_disc = TRUE;
++            }
+ 
+ #if (BLE_INCLUDED == TRUE && (defined BTA_GATT_INCLUDED) && (BTA_GATT_INCLUDED == TRUE))
+             if ( bta_dm_search_cb.p_btm_inq_info )
+@@ -3292,7 +3294,8 @@ void bta_dm_acl_change(tBTA_DM_MSG *p_data)
+         conn.link_down.link_type = p_data->acl_change.transport;
+ #endif
+ 
+-        if(bta_dm_search_cb.wait_disc && !bdcmp(bta_dm_search_cb.peer_bdaddr, p_bda))
++        if ((p_data->acl_change.transport == BT_TRANSPORT_BR_EDR) &&
++             bta_dm_search_cb.wait_disc && !bdcmp(bta_dm_search_cb.peer_bdaddr, p_bda))
+         {
+             bta_dm_search_cb.wait_disc = FALSE;
+ 
+diff --git a/btif/src/btif_dm.c b/btif/src/btif_dm.c
+index f70e4fa..1105226 100644
+--- a/btif/src/btif_dm.c
++++ b/btif/src/btif_dm.c
+@@ -1233,6 +1233,7 @@ static void btif_dm_auth_cmpl_evt (tBTA_DM_AUTH_CMPL *p_auth_cmpl)
+                 break;
+ 
+             case HCI_ERR_PAIRING_NOT_ALLOWED:
++                btif_storage_remove_bonded_device(&bd_addr);
+                 status = BT_STATUS_AUTH_REJECTED;
+                 break;
+ 
+@@ -1689,7 +1690,7 @@ static void btif_dm_upstreams_evt(UINT16 event, char* p_param)
+              bt_status_t status;
+              bt_property_t prop;
+              prop.type = BT_PROPERTY_BDNAME;
+-             prop.len = BD_NAME_LEN;
++             prop.len = BD_NAME_LEN + 1;
+              prop.val = (void*)bdname;
+ 
+              status = btif_storage_get_adapter_property(&prop);
+diff --git a/btif/src/btif_hl.c b/btif/src/btif_hl.c
+index eec9d34..316ce76 100644
+--- a/btif/src/btif_hl.c
++++ b/btif/src/btif_hl.c
+@@ -3186,6 +3186,7 @@ static void btif_hl_proc_cb_evt(UINT16 event, char* p_param){
+ 
+             break;
+         case BTIF_HL_REG_APP:
++            reg_counter++;
+             p_acb  = BTIF_HL_GET_APP_CB_PTR(p_data->reg.app_idx);
+             BTIF_TRACE_DEBUG("Rcv BTIF_HL_REG_APP app_idx=%d reg_pending=%d", p_data->reg.app_idx, p_acb->reg_pending);
+             if (btif_hl_get_state() == BTIF_HL_STATE_ENABLED && p_acb->reg_pending)
+@@ -3207,6 +3208,7 @@ static void btif_hl_proc_cb_evt(UINT16 event, char* p_param){
+             break;
+ 
+         case BTIF_HL_UNREG_APP:
++            reg_counter--;
+             BTIF_TRACE_DEBUG("Rcv BTIF_HL_UNREG_APP app_idx=%d", p_data->unreg.app_idx );
+             p_acb = BTIF_HL_GET_APP_CB_PTR(p_data->unreg.app_idx);
+             if (btif_hl_get_state() == BTIF_HL_STATE_ENABLED)
+@@ -4034,7 +4036,6 @@ static bt_status_t unregister_application(int app_id){
+     if (btif_hl_find_app_idx(((UINT8)app_id), &app_idx))
+     {
+         evt_param.unreg.app_idx = app_idx;
+-        reg_counter --;
+         len = sizeof(btif_hl_unreg_t);
+         status = btif_transfer_context (btif_hl_proc_cb_evt, BTIF_HL_UNREG_APP,
+                                         (char*) &evt_param, len, NULL);
+@@ -4160,7 +4161,6 @@ static bt_status_t register_application(bthl_reg_param_t *p_reg_param, int *app_
+         evt_param.reg.app_idx = app_idx;
+         len = sizeof(btif_hl_reg_t);
+         p_acb->reg_pending = TRUE;
+-        reg_counter++;
+         BTIF_TRACE_DEBUG("calling btif_transfer_context status=%d app_id=%d", status, *app_id);
+         status = btif_transfer_context (btif_hl_proc_cb_evt, BTIF_HL_REG_APP,
+                                         (char*) &evt_param, len, NULL);
+diff --git a/btif/src/btif_sock_l2cap.c b/btif/src/btif_sock_l2cap.c
+index 03c3ef4..6c87eeb 100644
+--- a/btif/src/btif_sock_l2cap.c
++++ b/btif/src/btif_sock_l2cap.c
+@@ -822,19 +822,21 @@ const tL2CAP_ERTM_INFO obex_l2c_etm_opt =
+  * and this function is called with the newly allocated PSM.
+  */
+ void on_l2cap_psm_assigned(int id, int psm) {
+-    l2cap_socket *sock;
+     /* Setup ETM settings:
+      *  mtu will be set below */
+     pthread_mutex_lock(&state_lock);
+-    sock = btsock_l2cap_find_by_id_l(id);
+-    sock->channel = psm;
++    l2cap_socket *sock = btsock_l2cap_find_by_id_l(id);
+ 
+-    if(btSock_start_l2cap_server_l(sock) != BT_STATUS_SUCCESS) {
+-        btsock_l2cap_free_l(sock);
++    if (sock) {
++        sock->channel = psm;
++
++        if (btSock_start_l2cap_server_l(sock) != BT_STATUS_SUCCESS)
++            btsock_l2cap_free_l(sock);
++    } else {
++        APPL_TRACE_ERROR("%s: Error: sock is null", __func__);
+     }
+ 
+     pthread_mutex_unlock(&state_lock);
+-
+ }
+ 
+ static bt_status_t btSock_start_l2cap_server_l(l2cap_socket *sock) {
+diff --git a/hci/src/hci_hal_h4.c b/hci/src/hci_hal_h4.c
+index 9c7afe5..28234f3 100644
+--- a/hci/src/hci_hal_h4.c
++++ b/hci/src/hci_hal_h4.c
+@@ -111,6 +111,8 @@ static void hal_close() {
+   LOG_INFO(LOG_TAG, "%s", __func__);
+ 
+   eager_reader_free(uart_stream);
++  uart_stream = NULL;
++
+   vendor->send_command(VENDOR_CLOSE_USERIAL, NULL);
+   uart_fd = INVALID_FD;
+ }
+diff --git a/hci/src/hci_hal_mct.c b/hci/src/hci_hal_mct.c
+index 669a9f8..128beee 100644
+--- a/hci/src/hci_hal_mct.c
++++ b/hci/src/hci_hal_mct.c
+@@ -119,7 +119,11 @@ static void hal_close() {
+   LOG_INFO(LOG_TAG, "%s", __func__);
+ 
+   eager_reader_free(event_stream);
++  event_stream = NULL;
++
+   eager_reader_free(acl_stream);
++  acl_stream = NULL;
++
+   vendor->send_command(VENDOR_CLOSE_USERIAL, NULL);
+ 
+   for (int i = 0; i < CH_MAX; i++)
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 3a45135..2b6357c 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -80,6 +80,11 @@ typedef enum {
+   FINISHED
+ } receive_state_t;
+ 
++typedef enum {
++  HCI_SHUTDOWN,
++  HCI_STARTED
++} hci_layer_state;
++
+ typedef struct {
+   receive_state_t state;
+   uint16_t bytes_remaining;
+@@ -140,6 +145,7 @@ static packet_receive_data_t incoming_packets[INBOUND_PACKET_TYPE_COUNT];
+ // The hand-off point for data going to a higher layer, set by the higher layer
+ static fixed_queue_t *upwards_data_queue;
+ 
++static int hci_state;
+ static future_t *shut_down();
+ 
+ static void event_finish_startup(void *context);
+@@ -273,6 +279,7 @@ static future_t *start_up(void) {
+ 
+   LOG_DEBUG(LOG_TAG, "%s starting async portion", __func__);
+   thread_post(thread, event_finish_startup, NULL);
++  hci_state = HCI_STARTED;
+   return local_startup_future;
+ 
+ error:
+@@ -296,6 +303,8 @@ static future_t *shut_down() {
+     thread_join(thread);
+   }
+ 
++  hci_state = HCI_SHUTDOWN;
++
+   fixed_queue_free(command_queue, osi_free);
+   command_queue = NULL;
+   fixed_queue_free(packet_queue, buffer_allocator->free);
+@@ -358,6 +367,11 @@ static void transmit_command(
+     command_complete_cb complete_callback,
+     command_status_cb status_callback,
+     void *context) {
++  if (hci_state != HCI_STARTED) {
++    LOG_ERROR("%s Returning, hci_layer not ready", __func__);
++    return;
++  }
++
+   waiting_command_t *wait_entry = osi_calloc(sizeof(waiting_command_t));
+ 
+   uint8_t *stream = command->data + command->offset;
+@@ -396,6 +410,9 @@ static void transmit_downward(data_dispatcher_type_t type, void *data) {
+     // TODO(zachoverflow): eliminate this call
+     transmit_command((BT_HDR *)data, NULL, NULL, NULL);
+     LOG_WARN(LOG_TAG, "%s legacy transmit of command. Use transmit_command instead.", __func__);
++  } else if (hci_state != HCI_STARTED) {
++      LOG_ERROR("%s Returning, hci_layer not ready", __func__);
++      return;
+   } else {
+     fixed_queue_enqueue(packet_queue, data);
+   }
+diff --git a/stack/btm/btm_acl.c b/stack/btm/btm_acl.c
+index b4a2562..6e09fdd 100644
+--- a/stack/btm/btm_acl.c
++++ b/stack/btm/btm_acl.c
+@@ -505,41 +505,44 @@ void btm_acl_update_busy_level (tBTM_BLI_EVENT event)
+     {
+         case BTM_BLI_ACL_UP_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_ACL_UP_EVT");
++            busy_level = BTM_GetNumAclLinks();
+             break;
+         case BTM_BLI_ACL_DOWN_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_ACL_DOWN_EVT");
++            busy_level = BTM_GetNumAclLinks();
+             break;
+         case BTM_BLI_PAGE_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_PAGE_EVT");
+             btm_cb.is_paging = TRUE;
+             evt.busy_level_flags= BTM_BL_PAGING_STARTED;
++            busy_level = BTM_BL_PAGING_STARTED;
+             break;
+         case BTM_BLI_PAGE_DONE_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_PAGE_DONE_EVT");
+             btm_cb.is_paging = FALSE;
+             evt.busy_level_flags = BTM_BL_PAGING_COMPLETE;
++            busy_level = BTM_BL_PAGING_COMPLETE;
+             break;
+         case BTM_BLI_INQ_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_INQ_EVT");
+             btm_cb.is_inquiry = TRUE;
+             evt.busy_level_flags = BTM_BL_INQUIRY_STARTED;
++            busy_level = BTM_BL_INQUIRY_STARTED;
+             break;
+         case BTM_BLI_INQ_CANCEL_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_INQ_CANCEL_EVT");
+             btm_cb.is_inquiry = FALSE;
+             evt.busy_level_flags = BTM_BL_INQUIRY_CANCELLED;
++            busy_level = BTM_BL_INQUIRY_COMPLETE;
+             break;
+         case BTM_BLI_INQ_DONE_EVT:
+             BTM_TRACE_DEBUG ("BTM_BLI_INQ_DONE_EVT");
+             btm_cb.is_inquiry = FALSE;
+             evt.busy_level_flags = BTM_BL_INQUIRY_COMPLETE;
++            busy_level = BTM_BL_INQUIRY_COMPLETE;
+             break;
+     }
+ 
+-    if (btm_cb.is_paging || btm_cb.is_inquiry)
+-        busy_level = 10;
+-    else
+-        busy_level = BTM_GetNumAclLinks();
+ 
+     if ((busy_level != btm_cb.busy_level) ||(old_inquiry_state != btm_cb.is_inquiry))
+     {
+diff --git a/stack/btm/btm_sec.c b/stack/btm/btm_sec.c
+index 83f6494..a381d08 100644
+--- a/stack/btm/btm_sec.c
++++ b/stack/btm/btm_sec.c
+@@ -902,6 +902,7 @@ void BTM_PINCodeReply (BD_ADDR bd_addr, UINT8 res, UINT8 pin_len, UINT8 *p_pin,
+     if (trusted_mask)
+         BTM_SEC_COPY_TRUSTED_DEVICE(trusted_mask, p_dev_rec->trusted_mask);
+     p_dev_rec->sec_flags   |= BTM_SEC_LINK_KEY_AUTHED;
++    p_dev_rec->pin_code_length = pin_len;
+     if (pin_len >= 16) {
+         p_dev_rec->sec_flags |= BTM_SEC_16_DIGIT_PIN_AUTHED;
+     }
+@@ -912,7 +913,6 @@ void BTM_PINCodeReply (BD_ADDR bd_addr, UINT8 res, UINT8 pin_len, UINT8 *p_pin,
+     {
+         /* This is start of the dedicated bonding if local device is 2.0 */
+         btm_cb.pin_code_len = pin_len;
+-        p_dev_rec->pin_code_length = pin_len;
+         memcpy (btm_cb.pin_code, p_pin, pin_len);
+ 
+         btm_cb.security_mode_changed = TRUE;
+@@ -4071,7 +4071,7 @@ void btm_sec_auth_complete (UINT16 handle, UINT8 status)
+     if (btm_cb.api.p_auth_complete_callback)
+     {
+         /* report the suthentication status */
+-        if (old_state != BTM_PAIR_STATE_IDLE)
++        if ((old_state != BTM_PAIR_STATE_IDLE) || (status != HCI_SUCCESS))
+             (*btm_cb.api.p_auth_complete_callback) (p_dev_rec->bd_addr,
+                                                     p_dev_rec->dev_class,
+                                                     p_dev_rec->sec_bd_name, status);
+@@ -4564,7 +4564,6 @@ void btm_sec_connected (UINT8 *bda, UINT16 handle, UINT8 status, UINT8 enc_mode)
+                  (((status == HCI_ERR_AUTH_FAILURE)                      ||
+                  (status == HCI_ERR_KEY_MISSING)                         ||
+                  (status == HCI_ERR_HOST_REJECT_SECURITY)                ||
+-                 (status == HCI_ERR_PAIRING_NOT_ALLOWED)                 ||
+                  (status == HCI_ERR_UNIT_KEY_USED)                       ||
+                  (status == HCI_ERR_PAIRING_WITH_UNIT_KEY_NOT_SUPPORTED) ||
+                  (status == HCI_ERR_ENCRY_MODE_NOT_ACCEPTABLE)           ||
+diff --git a/stack/include/btm_api.h b/stack/include/btm_api.h
+index 89b718f..5bbf485 100644
+--- a/stack/include/btm_api.h
++++ b/stack/include/btm_api.h
+@@ -835,7 +835,8 @@ typedef struct
+ typedef struct
+ {
+     tBTM_BL_EVENT   event;  /* The event reported. */
+-    UINT8           busy_level;/* when paging or inquiring, level is 10.
++    UINT8           busy_level;/* when paging or inquiring, level is between
++                                  17 to 21 as the max links can be 16.
+                                 * Otherwise, the number of ACL links. */
+     UINT8           busy_level_flags; /* Notifies actual inquiry/page activities */
+ } tBTM_BL_UPDATE_DATA;
+diff --git a/stack/l2cap/l2c_csm.c b/stack/l2cap/l2c_csm.c
+index dedffc8..01fe1f3 100644
+--- a/stack/l2cap/l2c_csm.c
++++ b/stack/l2cap/l2c_csm.c
+@@ -229,7 +229,7 @@ Event uninit_use_in_call: Using uninitialized value "settings.min" in call to fu
+         p_ccb->chnl_state = CST_W4_L2CAP_CONNECT_RSP;
+ 
+         /* Wait for the info resp in this state before sending connect req (if needed) */
+-        if (!p_ccb->p_lcb->w4_info_rsp)
++        if ((!p_ccb->p_lcb->w4_info_rsp) || (BT_PSM_SDP == p_ccb->p_rcb->psm))
+         {
+             /* Need to have at least one compatible channel to continue */
+             if (!l2c_fcr_chk_chan_modes(p_ccb))
+-- 
+2.7.4
+
+
+From ae118aea26bf9c2a8da3ea7edbd6546307f0627a Mon Sep 17 00:00:00 2001
+From: Srinu Jella <sjella@codeaurora.org>
+Date: Mon, 21 Sep 2015 19:29:50 +0530
+Subject: [PATCH 02/11] Bluetooth: Add support to send h/w error event
+
+- Bluedroid stack needs to be reset whenever H/w
+  chip restarts like Subsytem restart.
+
+- Emulates the hardware error event on detecting
+  SSR event from PR controller.
+
+CRs-Fixed: 914079
+Change-Id: I9248a4e6ad689fc590fd4fd0f7a067cd33bf314f
+
+Bluetooth: Reset bluetooth status to download NVM tags
+
+- Reset bluetooth status to download the NVM tags once
+  the SSR is detected.
+
+- NVM tags downloaded only once for the first BT on and
+  downloaded again in case of SSR or command timeout.
+
+- Without this change, there would be diffrence in
+  BD addr which would lead to pair/connection issues.
+
+CRs-Fixed: 932195
+Change-Id: I75a44e7ae7d301ff1c9be8349c1b51d4c80cbf36
+
+BT: Adding check for packet size before allocating buffer
+
+During controller reset, corrupted packet might reach
+to host. This packet might indicate length value more
+than maximum allowed packet length. This causes crash
+during buffer allocation.
+Added the correct length check before allocating the
+memory.
+
+CRs-Fixed: 978009
+Change-Id: I462b9b18e4c9db67d4860509376b0cb38830e56d
+
+BT: Rectify the method to reset host after controller crash
+
+Use case: When controller is forcefully crashed for testing,
+the host process should reset itself.
+
+Steps: Testing envolving forceful crashing of controller
+to observe recovery and behavior of host in such events.
+
+Failure: Once controller crash was enforced, the host
+process was not resetting itself.
+
+Root cause: The packet created to send hw reset event to
+stack was getting truncated.
+
+Fix: Changed the logic to first create an empty packet and
+later set its type and data to make hw reset event.
+
+CRs-Fixed: 1000446
+
+Change-Id: Ied4e62db0be5bb8e16fac05787b9a071fd86b1e7
+---
+ hci/Android.mk        |  4 ++++
+ hci/include/hci_hal.h |  6 ++++++
+ hci/src/hci_hal_h4.c  | 10 ++++++++++
+ hci/src/hci_hal_mct.c | 35 ++++++++++++++++++++++++++++++++++
+ hci/src/hci_layer.c   | 52 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 107 insertions(+)
+
+diff --git a/hci/Android.mk b/hci/Android.mk
+index 0727100..aa878e5 100644
+--- a/hci/Android.mk
++++ b/hci/Android.mk
+@@ -22,6 +22,10 @@ LOCAL_SRC_FILES := \
+     src/vendor.c \
+     ../EventLogTags.logtags
+ 
++ifeq ($(QCOM_BT_USE_SMD_TTY),true)
++LOCAL_CFLAGS += -DQCOM_WCN_SSR
++endif
++
+ LOCAL_C_INCLUDES += \
+     $(LOCAL_PATH)/include \
+     $(LOCAL_PATH)/.. \
+diff --git a/hci/include/hci_hal.h b/hci/include/hci_hal.h
+index 93d9a2f..df6a99f 100644
+--- a/hci/include/hci_hal.h
++++ b/hci/include/hci_hal.h
+@@ -75,6 +75,12 @@ typedef struct hci_hal_t {
+   // This is safe in the bluetooth context, because there is always a buffer
+   // header that prefixes data you're sending.
+   uint16_t (*transmit_data)(serial_data_type_t type, uint8_t *data, uint16_t length);
++
++#ifdef QCOM_WCN_SSR
++  // to detect the SSR in PR controller
++  bool (*dev_in_reset)(void);
++#endif
++
+ } hci_hal_t;
+ 
+ // Gets the correct hal implementation, as compiled for.
+diff --git a/hci/src/hci_hal_h4.c b/hci/src/hci_hal_h4.c
+index 28234f3..d6600b7 100644
+--- a/hci/src/hci_hal_h4.c
++++ b/hci/src/hci_hal_h4.c
+@@ -186,6 +186,13 @@ done:;
+   return transmitted_length;
+ }
+ 
++#ifdef QCOM_WCN_SSR
++static bool hal_dev_in_reset()
++{
++    return false;
++}
++#endif
++
+ // Internal functions
+ 
+ // WORKAROUND:
+@@ -258,6 +265,9 @@ static const hci_hal_t interface = {
+   read_data,
+   packet_finished,
+   transmit_data,
++#ifdef QCOM_WCN_SSR
++  hal_dev_in_reset
++#endif
+ };
+ 
+ const hci_hal_t *hci_hal_h4_get_interface() {
+diff --git a/hci/src/hci_hal_mct.c b/hci/src/hci_hal_mct.c
+index 128beee..744d9b1 100644
+--- a/hci/src/hci_hal_mct.c
++++ b/hci/src/hci_hal_mct.c
+@@ -33,6 +33,11 @@
+ 
+ #define HCI_HAL_SERIAL_BUFFER_SIZE 1026
+ 
++#ifdef QCOM_WCN_SSR
++#include <termios.h>
++#include <sys/ioctl.h>
++#endif
++
+ // Our interface and modules we import
+ static const hci_hal_t interface;
+ static const hci_hal_callbacks_t *callbacks;
+@@ -130,6 +135,33 @@ static void hal_close() {
+     uart_fds[i] = INVALID_FD;
+ }
+ 
++#ifdef QCOM_WCN_SSR
++static bool hal_dev_in_reset()
++{
++  volatile int serial_bits;
++  bool dev_reset_done =0;
++  uint8_t retry_count = 0;
++  ioctl(uart_fds[CH_EVT], TIOCMGET, &serial_bits);
++  if (serial_bits & TIOCM_OUT2) {
++    while(serial_bits & TIOCM_OUT1) {
++      LOG_WARN(LOG_TAG,"userial_device in reset \n");
++      sleep(2);
++      retry_count++;
++      ioctl(uart_fds[CH_EVT], TIOCMGET, &serial_bits);
++      if((serial_bits & TIOCM_OUT1))
++        dev_reset_done = 0;
++      else
++        dev_reset_done = 1;
++      if(retry_count == 6) {
++        dev_reset_done = 1;
++        break;
++      }
++    }
++  }
++  return dev_reset_done;
++}
++#endif
++
+ static size_t read_data(serial_data_type_t type, uint8_t *buffer, size_t max_size) {
+   if (type == DATA_TYPE_ACL) {
+     return eager_reader_read(acl_stream, buffer, max_size);
+@@ -202,6 +234,9 @@ static const hci_hal_t interface = {
+   read_data,
+   packet_finished,
+   transmit_data,
++#ifdef QCOM_WCN_SSR
++  hal_dev_in_reset
++#endif
+ };
+ 
+ const hci_hal_t *hci_hal_mct_get_interface() {
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 2b6357c..996d775 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -170,6 +170,9 @@ static serial_data_type_t event_to_data_type(uint16_t event);
+ static waiting_command_t *get_waiting_command(command_opcode_t opcode);
+ static void update_command_response_timer(void);
+ 
++static bool create_hw_reset_evt_packet(packet_receive_data_t *incoming);
++
++
+ // Module lifecycle functions
+ 
+ static future_t *start_up(void) {
+@@ -568,8 +571,29 @@ static void command_timed_out(UNUSED_ATTR void *context) {
+ static void hal_says_data_ready(serial_data_type_t type) {
+   packet_receive_data_t *incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type)];
+ 
++#ifdef QCOM_WCN_SSR
++  uint8_t reset;
++#endif
++
+   uint8_t byte;
+   while (hal->read_data(type, &byte, 1) != 0) {
++#ifdef QCOM_WCN_SSR
++    reset = hal->dev_in_reset();
++    if (reset) {
++      incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
++      if(!create_hw_reset_evt_packet(incoming))
++        break;
++      else {
++        //Reset SOC status to trigger hciattach service
++        if(property_set("bluetooth.status", "off") < 0) {
++            LOG_ERROR(LOG_TAG, "SSR: Error resetting SOC status\n ");
++        } else {
++            ALOGE("SSR: SOC Status is reset\n ");
++        }
++      }
++    } else
++#endif
++    {
+     switch (incoming->state) {
+       case BRAND_NEW:
+         // Initialize and prepare to jump to the preamble reading state
+@@ -588,6 +612,16 @@ static void hal_says_data_ready(serial_data_type_t type) {
+           incoming->bytes_remaining = (type == DATA_TYPE_ACL) ? RETRIEVE_ACL_LENGTH(incoming->preamble) : byte;
+ 
+           size_t buffer_size = BT_HDR_SIZE + incoming->index + incoming->bytes_remaining;
++
++          if (buffer_size > MCA_USER_RX_BUF_SIZE) {
++            LOG_ERROR(LOG_TAG, "%s buffer_size(%zu) exceeded allowed packet size, allocation not possible", __func__, buffer_size);
++            incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
++            if(create_hw_reset_evt_packet(incoming))
++              break;
++            else
++              return;
++          }
++
+           incoming->buffer = (BT_HDR *)buffer_allocator->alloc(buffer_size);
+ 
+           if (!incoming->buffer) {
+@@ -634,6 +668,7 @@ static void hal_says_data_ready(serial_data_type_t type) {
+         LOG_ERROR(LOG_TAG, "%s the state machine should not have been left in the finished state.", __func__);
+         break;
+     }
++    }
+ 
+     if (incoming->state == FINISHED) {
+       incoming->buffer->len = incoming->index;
+@@ -832,6 +867,23 @@ void hci_layer_cleanup_interface() {
+     interface_created = false;
+   }
+ }
++static bool create_hw_reset_evt_packet(packet_receive_data_t *incoming) {
++  uint8_t dev_ssr_event[3] = { 0x10, 0x01, 0x0A };
++  incoming->buffer = (BT_HDR *)buffer_allocator->alloc(BT_HDR_SIZE + 3);
++  if (incoming->buffer) {
++    LOG_ERROR(LOG_TAG, "sending H/w error event to stack\n ");
++    incoming->buffer->offset = 0;
++    incoming->buffer->layer_specific = 0;
++    incoming->buffer->event = MSG_HC_TO_STACK_HCI_EVT;
++    incoming->index = 3;
++    memcpy(incoming->buffer->data, &dev_ssr_event, 3);
++    incoming->state = FINISHED;
++    return true;
++  } else {
++    LOG_ERROR(LOG_TAG, "error getting buffer for H/W event\n ");
++    return false;
++  }
++}
+ 
+ static const hci_hal_callbacks_t hal_callbacks = {
+   hal_says_data_ready
+-- 
+2.7.4
+
+
+From f2d6e130d5e8cf6b473f3b44da21f55488fbfbb5 Mon Sep 17 00:00:00 2001
+From: Satish kumar sugasi <ssugas@codeaurora.org>
+Date: Thu, 17 Dec 2015 12:26:03 -0800
+Subject: [PATCH 03/11] Add support for FM vendor operations such as ON/OFF
+
+This adds FM ON/OFF and HCI init operations
+
+Change-Id: I476a8017343f9bc8dd8f30cc5ce14c8d05515caf
+---
+ hci/include/bt_vendor_lib.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/hci/include/bt_vendor_lib.h b/hci/include/bt_vendor_lib.h
+index b4396ea..65dee72 100644
+--- a/hci/include/bt_vendor_lib.h
++++ b/hci/include/bt_vendor_lib.h
+@@ -196,6 +196,12 @@ typedef enum {
+  */
+     BT_VND_OP_A2DP_OFFLOAD_STOP,
+ 
++    FM_VND_OP_POWER_CTRL,
++
++    BT_VND_OP_FM_USERIAL_OPEN,
++
++    BT_VND_OP_FM_USERIAL_CLOSE,
++
+ } bt_vendor_opcode_t;
+ 
+ /** Power on/off control states */
+-- 
+2.7.4
+
+
+From 7b3c79bbe81b99dbc616e3b6c36af6b546c8f8ba Mon Sep 17 00:00:00 2001
+From: Srinu Jella <sjella@codeaurora.org>
+Date: Tue, 15 Dec 2015 19:52:32 +0530
+Subject: [PATCH 04/11] Bluetooth: Disable eager reader threads in RX path
+
+- Disabled eager reader threads in RX path for both
+  ROME and PRONTO targets.
+
+- Exising machamisn is to poll for incoming data
+  (event, ACL data) using dedicated thread called
+  eager reader thread.
+
+- Now the responsibility of polling for data moved
+  to existing HCI worker thread.
+
+- Enhanced the read mechanism from hci hal interface.
+
+CRsFixed: 934414
+Change-Id: Icfd27b7b93f83033b2230e61a23df69aa3c33bdf
+
+Bluetooth: Optimize the L2cap FCR tx timer
+
+- Optimize the L2cap Flow control tx timer
+  to avoid frequent start and stop of same
+  timer.
+
+- it will restart the timer instead of stop
+  and start.
+
+- Changes made in btm timer functions also
+  to avoid scheduling of next timer in queue
+  though is not required as the same timer
+  is supposed to start.
+
+CRsFixed: 934414
+Change-Id: Idd43a71617a27c6d70fafa4e31c16f735a1a9425
+
+Bluetooth: Handle the SSR timeout case properly
+
+- Kill the bluetooth process in case of SSR timeout,
+  otherwise it will try to read the invalid data
+  that might lead to crash.
+
+- Also corrected the data type to check when error
+  occurs on read call.
+
+CRs-Fixed: 978009
+Change-Id: I42f6c9f4a437f7b143fe1e1beb3b6ef39533f4d7
+---
+ hci/include/hci_internals.h | 36 +++++++++++++++++
+ hci/src/hci_hal.c           | 94 +++++++++++++++++++++++++++++++++++++++++++
+ hci/src/hci_hal_h4.c        | 78 ++++++++++++++++++++++++++++++++++--
+ hci/src/hci_hal_mct.c       | 98 ++++++++++++++++++++++++++++++++++++++++++++-
+ stack/l2cap/l2c_fcr.c       | 44 ++++++++++++++++++--
+ 5 files changed, 341 insertions(+), 9 deletions(-)
+
+diff --git a/hci/include/hci_internals.h b/hci/include/hci_internals.h
+index 6b9fb01..e92af5e 100644
+--- a/hci/include/hci_internals.h
++++ b/hci/include/hci_internals.h
+@@ -18,6 +18,14 @@
+ 
+ #pragma once
+ 
++#define REMOVE_EAGER_THREADS TRUE
++
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++#include "osi/include/allocator.h"
++#include "osi/include/thread.h"
++#include "osi/include/reactor.h"
++#endif
++
+ // 2 bytes for opcode, 1 byte for parameter length (Volume 2, Part E, 5.4.1)
+ #define HCI_COMMAND_PREAMBLE_SIZE 3
+ // 2 bytes for handle, 2 bytes for data length (Volume 2, Part E, 5.4.2)
+@@ -26,3 +34,31 @@
+ #define HCI_SCO_PREAMBLE_SIZE 3
+ // 1 byte for event code, 1 byte for parameter length (Volume 2, Part E, 5.4.4)
+ #define HCI_EVENT_PREAMBLE_SIZE 2
++
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++struct hci_reader_t {
++  int inbound_fd;
++
++  const allocator_t *allocator;
++  size_t buffer_size;
++  uint8_t *data_buffer;
++  int rd_ptr;
++  int wr_ptr;
++
++  thread_t *inbound_read_thread;
++  reactor_object_t *inbound_read_object;
++};
++typedef  struct hci_reader_t hci_reader_t;
++typedef void (*hci_reader_cb)(void *context);
++
++hci_reader_t *hci_reader_new(
++    int fd_to_read,
++    size_t buffer_size,
++    size_t max_buffer_count,
++    thread_t *thread,
++    hci_reader_cb read_cb
++    );
++
++size_t hci_reader_read(hci_reader_t *reader, uint8_t *buffer, size_t max_size);
++void hci_reader_free(hci_reader_t *reader);
++#endif
+diff --git a/hci/src/hci_hal.c b/hci/src/hci_hal.c
+index fa526ce..96fc6f8 100644
+--- a/hci/src/hci_hal.c
++++ b/hci/src/hci_hal.c
+@@ -17,6 +17,14 @@
+  ******************************************************************************/
+ 
+ #include "hci_hal.h"
++#include "hci_internals.h"
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++#include <assert.h>
++#include <string.h>
++#include "osi/include/eager_reader.h"
++#include "osi/include/osi.h"
++#include "osi/include/log.h"
++#endif
+ 
+ const hci_hal_t *hci_hal_get_interface() {
+ #if HCI_USE_MCT
+@@ -26,3 +34,89 @@ const hci_hal_t *hci_hal_get_interface() {
+ #endif
+ }
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++void hci_reader_free(hci_reader_t *reader) {
++  if (!reader)
++    return;
++
++  // Only unregister from the input if we actually did register
++  if (reader->inbound_read_object)
++    reactor_unregister(reader->inbound_read_object);
++
++  // Free the current buffer, because it's not in the queue
++  // and won't be freed below
++  if (reader->data_buffer)
++    osi_free(reader->data_buffer);
++
++  osi_free(reader);
++}
++
++hci_reader_t *hci_reader_new(
++    int fd_to_read,
++    size_t buffer_size,
++    size_t max_buffer_count,
++    thread_t *thread,
++    hci_reader_cb read_cb
++    ) {
++
++  assert(fd_to_read != INVALID_FD);
++  assert(buffer_size > 0);
++  assert(max_buffer_count > 0);
++
++
++  hci_reader_t *ret = osi_calloc(sizeof(hci_reader_t));
++  if (!ret) {
++    LOG_ERROR("%s unable to allocate memory for new hci_reader.", __func__);
++    goto error;
++  }
++
++  ret->inbound_fd = fd_to_read;
++
++  ret->data_buffer = osi_calloc(buffer_size);
++  ret->buffer_size = buffer_size;
++  ret->rd_ptr = 0;
++  ret->wr_ptr = 0;
++
++  ret->inbound_read_thread = thread;
++  if (!ret->inbound_read_thread) {
++    LOG_ERROR("%s unable to make reading thread.", __func__);
++    goto error;
++  }
++
++  ret->inbound_read_object = reactor_register(
++      thread_get_reactor(ret->inbound_read_thread),
++      fd_to_read,
++      ret,
++      read_cb,
++      NULL
++      );
++
++  return ret;
++
++error:;
++  hci_reader_free(ret);
++  return NULL;
++}
++
++size_t hci_reader_read(hci_reader_t *reader, uint8_t *buffer, size_t req_size) {
++  int bytes_read = 0;
++  assert(reader != NULL);
++  assert(buffer != NULL);
++
++  // If the caller wants nonblocking behavior, poll to see if we have
++  // any bytes available before reading.
++  if (reader->rd_ptr < reader->wr_ptr) {
++    bytes_read = reader->wr_ptr - reader->rd_ptr;
++    if ((size_t) bytes_read > req_size)
++      bytes_read = req_size;
++    memcpy(buffer, reader->data_buffer+reader->rd_ptr, bytes_read);
++    reader->rd_ptr += bytes_read;
++  } else {
++    bytes_read = read(reader->inbound_fd, buffer, req_size);
++    if(bytes_read == -1)
++      bytes_read = 0;
++  }
++
++  return bytes_read;
++}
++#endif
+diff --git a/hci/src/hci_hal_h4.c b/hci/src/hci_hal_h4.c
+index d6600b7..8087a4f 100644
+--- a/hci/src/hci_hal_h4.c
++++ b/hci/src/hci_hal_h4.c
+@@ -48,13 +48,23 @@ static const vendor_t *vendor;
+ static thread_t *thread; // Not owned by us
+ 
+ static int uart_fd;
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static hci_reader_t *uart_stream;
++#else
+ static eager_reader_t *uart_stream;
++#endif
+ static serial_data_type_t current_data_type;
+ static bool stream_has_interpretation;
+ static bool stream_corruption_detected;
+ static uint8_t stream_corruption_bytes_to_ignore;
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static void event_uart_has_bytes(void *context);
++#else
+ static void event_uart_has_bytes(eager_reader_t *reader, void *context);
++static bool stream_corrupted_during_le_scan_workaround(const uint8_t byte_read);
++#endif
++
+ 
+ // Interface functions
+ 
+@@ -85,20 +95,28 @@ static bool hal_open() {
+     goto error;
+   }
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  uart_stream = hci_reader_new(uart_fd, HCI_HAL_SERIAL_BUFFER_SIZE, SIZE_MAX, thread, event_uart_has_bytes);
++  if (!uart_stream) {
++    LOG_ERROR("%s unable to create hci reader for the uart serial port.", __func__);
++    goto error;
++  }
++#else
+   uart_stream = eager_reader_new(uart_fd, &allocator_malloc, HCI_HAL_SERIAL_BUFFER_SIZE, SIZE_MAX, "hci_single_channel");
+   if (!uart_stream) {
+     LOG_ERROR(LOG_TAG, "%s unable to create eager reader for the uart serial port.", __func__);
+     goto error;
+   }
++  eager_reader_register(uart_stream, thread_get_reactor(thread), event_uart_has_bytes, NULL);
++  thread_set_priority(eager_reader_get_read_thread(uart_stream), HCI_THREAD_PRIORITY);
++#endif
+ 
+   stream_has_interpretation = false;
+   stream_corruption_detected = false;
+   stream_corruption_bytes_to_ignore = 0;
+-  eager_reader_register(uart_stream, thread_get_reactor(thread), event_uart_has_bytes, NULL);
+ 
+   // Raise thread priorities to keep up with audio
+   thread_set_priority(thread, HCI_THREAD_PRIORITY);
+-  thread_set_priority(eager_reader_get_read_thread(uart_stream), HCI_THREAD_PRIORITY);
+ 
+   return true;
+ 
+@@ -110,7 +128,11 @@ error:
+ static void hal_close() {
+   LOG_INFO(LOG_TAG, "%s", __func__);
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  hci_reader_free(uart_stream);
++#else
+   eager_reader_free(uart_stream);
++#endif
+   uart_stream = NULL;
+ 
+   vendor->send_command(VENDOR_CLOSE_USERIAL, NULL);
+@@ -129,7 +151,11 @@ static size_t read_data(serial_data_type_t type, uint8_t *buffer, size_t max_siz
+     return 0;
+   }
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  return hci_reader_read(uart_stream, buffer, max_size);
++#else
+   return eager_reader_read(uart_stream, buffer, max_size);
++#endif
+ }
+ 
+ static void packet_finished(serial_data_type_t type) {
+@@ -138,7 +164,24 @@ static void packet_finished(serial_data_type_t type) {
+   else if (current_data_type != type)
+     LOG_ERROR(LOG_TAG, "%s with different type than existing interpretation.", __func__);
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  if (uart_stream->rd_ptr == uart_stream->wr_ptr) {
++    uart_stream->rd_ptr = uart_stream->wr_ptr = 0;
++    stream_has_interpretation = false;
++  } else {
++    uint8_t type_byte;
++    type_byte = uart_stream->data_buffer[uart_stream->rd_ptr++];
++    if (type_byte < DATA_TYPE_ACL || type_byte > DATA_TYPE_EVENT) {
++      LOG_ERROR("%s Unknown HCI message type. Dropping this byte 0x%x, min %x, max %x", __func__,
++                                                    type_byte, DATA_TYPE_ACL, DATA_TYPE_EVENT);
++      return;
++    }
++    current_data_type = type_byte;
++    callbacks->data_ready(current_data_type);
++  }
++#else
+   stream_has_interpretation = false;
++#endif
+ }
+ 
+ static uint16_t transmit_data(serial_data_type_t type, uint8_t *data, uint16_t length) {
+@@ -203,6 +246,7 @@ static bool hal_dev_in_reset()
+ // skip the correct amount of bytes in the stream to re-synchronize onto
+ // a packet boundary.
+ // Function returns true if |byte_read| has been processed by the workaround.
++#if (!defined(REMOVE_EAGER_THREADS) || ((defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == FALSE))))
+ static bool stream_corrupted_during_le_scan_workaround(const uint8_t byte_read)
+ {
+   if (!stream_corruption_detected && byte_read == HCI_BLE_EVENT) {
+@@ -228,8 +272,35 @@ static bool stream_corrupted_during_le_scan_workaround(const uint8_t byte_read)
+ 
+   return false;
+ }
+-
++#endif
+ // See what data is waiting, and notify the upper layer
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static void event_uart_has_bytes(void *context) {
++  uint8_t type_byte;
++  int bytes_read;
++  hci_reader_t *reader = (hci_reader_t *) context;
++  bytes_read = read(reader->inbound_fd, reader->data_buffer + reader->wr_ptr, reader->buffer_size - reader->wr_ptr);
++
++  if (bytes_read <= 0)  {
++    LOG_ERROR("%s could not read HCI message type", __func__);
++    return;
++  }
++  reader->wr_ptr += bytes_read;
++  if (!stream_has_interpretation) {
++    type_byte = reader->data_buffer[reader->rd_ptr++];
++
++    if (type_byte < DATA_TYPE_ACL || type_byte > DATA_TYPE_EVENT) {
++      LOG_ERROR("%s Unknown HCI message type. Dropping this byte 0x%x, min %x, max %x", __func__, type_byte, DATA_TYPE_ACL, DATA_TYPE_EVENT);
++      return;
++    }
++
++    stream_has_interpretation = true;
++    current_data_type = type_byte;
++  }
++
++  callbacks->data_ready(current_data_type);
++}
++#else
+ static void event_uart_has_bytes(eager_reader_t *reader, UNUSED_ATTR void *context) {
+   if (stream_has_interpretation) {
+     callbacks->data_ready(current_data_type);
+@@ -255,6 +326,7 @@ static void event_uart_has_bytes(eager_reader_t *reader, UNUSED_ATTR void *conte
+     current_data_type = type_byte;
+   }
+ }
++#endif
+ 
+ static const hci_hal_t interface = {
+   hal_init,
+diff --git a/hci/src/hci_hal_mct.c b/hci/src/hci_hal_mct.c
+index 744d9b1..5e43fb2 100644
+--- a/hci/src/hci_hal_mct.c
++++ b/hci/src/hci_hal_mct.c
+@@ -46,12 +46,22 @@ static const vendor_t *vendor;
+ static thread_t *thread; // Not owned by us
+ 
+ static int uart_fds[CH_MAX];
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static hci_reader_t *event_stream;
++static hci_reader_t *acl_stream;
++#else
+ static eager_reader_t *event_stream;
+ static eager_reader_t *acl_stream;
++#endif
+ 
+ static uint16_t transmit_data_on(int fd, uint8_t *data, uint16_t length);
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static void event_event_stream_has_bytes(void *context);
++static void event_acl_stream_has_bytes(void *context);
++#else
+ static void event_event_stream_has_bytes(eager_reader_t *reader, void *context);
+ static void event_acl_stream_has_bytes(eager_reader_t *reader, void *context);
++#endif
+ 
+ // Interface functions
+ 
+@@ -98,6 +108,21 @@ static bool hal_open() {
+     goto error;
+   }
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  event_stream = hci_reader_new(uart_fds[CH_EVT], HCI_HAL_SERIAL_BUFFER_SIZE, SIZE_MAX,
++                                                 thread, event_event_stream_has_bytes);
++  if (!event_stream) {
++    LOG_ERROR("%s unable to create hci reader for the event uart serial port.", __func__);
++    goto error;
++  }
++
++  acl_stream = hci_reader_new(uart_fds[CH_ACL_IN], HCI_HAL_SERIAL_BUFFER_SIZE, SIZE_MAX,
++                                                    thread, event_acl_stream_has_bytes);
++  if (!acl_stream) {
++    LOG_ERROR("%s unable to create hci reader for the acl-in uart serial port.", __func__);
++    goto error;
++  }
++#else
+   event_stream = eager_reader_new(uart_fds[CH_EVT], &allocator_malloc, HCI_HAL_SERIAL_BUFFER_SIZE, SIZE_MAX, "hci_mct");
+   if (!event_stream) {
+     LOG_ERROR(LOG_TAG, "%s unable to create eager reader for the event uart serial port.", __func__);
+@@ -113,6 +138,8 @@ static bool hal_open() {
+   eager_reader_register(event_stream, thread_get_reactor(thread), event_event_stream_has_bytes, NULL);
+   eager_reader_register(acl_stream, thread_get_reactor(thread), event_acl_stream_has_bytes, NULL);
+ 
++#endif
++
+   return true;
+ 
+ error:;
+@@ -123,11 +150,18 @@ error:;
+ static void hal_close() {
+   LOG_INFO(LOG_TAG, "%s", __func__);
+ 
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  hci_reader_free(event_stream);
++  event_stream = NULL;
++  hci_reader_free(acl_stream);
++  acl_stream = NULL;
++#else
+   eager_reader_free(event_stream);
+   event_stream = NULL;
+ 
+   eager_reader_free(acl_stream);
+   acl_stream = NULL;
++#endif
+ 
+   vendor->send_command(VENDOR_CLOSE_USERIAL, NULL);
+ 
+@@ -153,6 +187,8 @@ static bool hal_dev_in_reset()
+       else
+         dev_reset_done = 1;
+       if(retry_count == 6) {
++        //treat it as ssr completed to kill the bt
++        // process
+         dev_reset_done = 1;
+         break;
+       }
+@@ -163,11 +199,19 @@ static bool hal_dev_in_reset()
+ #endif
+ 
+ static size_t read_data(serial_data_type_t type, uint8_t *buffer, size_t max_size) {
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  if (type == DATA_TYPE_ACL) {
++    return hci_reader_read(acl_stream, buffer, max_size);
++  } else if (type == DATA_TYPE_EVENT) {
++    return hci_reader_read(event_stream, buffer, max_size);
++  }
++#else
+   if (type == DATA_TYPE_ACL) {
+     return eager_reader_read(acl_stream, buffer, max_size);
+   } else if (type == DATA_TYPE_EVENT) {
+     return eager_reader_read(event_stream, buffer, max_size);
+   }
++#endif
+ 
+   LOG_ERROR(LOG_TAG, "%s invalid data type: %d", __func__, type);
+   return 0;
+@@ -175,6 +219,25 @@ static size_t read_data(serial_data_type_t type, uint8_t *buffer, size_t max_siz
+ 
+ static void packet_finished(UNUSED_ATTR serial_data_type_t type) {
+   // not needed by this protocol
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++  hci_reader_t *stream = NULL;
++  if (type == DATA_TYPE_ACL) {
++    stream = acl_stream;
++  } else if (type == DATA_TYPE_EVENT) {
++    stream = event_stream;
++  }
++
++  if(!stream) {
++    LOG_ERROR("%s invalid data type: %d", __func__, type);
++    return;
++  }
++
++  if (stream->rd_ptr == stream->wr_ptr) {
++    stream->rd_ptr = stream->wr_ptr = 0;
++  } else {
++    callbacks->data_ready(type);
++  }
++#endif
+ }
+ 
+ static uint16_t transmit_data(serial_data_type_t type, uint8_t *data, uint16_t length) {
+@@ -216,14 +279,45 @@ static uint16_t transmit_data_on(int fd, uint8_t *data, uint16_t length) {
+   return transmitted_length;
+ }
+ 
+-static void event_event_stream_has_bytes(UNUSED_ATTR eager_reader_t *reader, UNUSED_ATTR void *context) {
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static void event_event_stream_has_bytes(void *context) {
++  int bytes_read;
++  hci_reader_t *reader = (hci_reader_t *) context;
++  bytes_read = read(reader->inbound_fd, reader->data_buffer+reader->wr_ptr,
++                                    reader->buffer_size - reader->wr_ptr);
++  if (bytes_read <= 0) {
++    LOG_ERROR("%s could not read HCI message type", __func__);
++    return;
++  }
++  reader->wr_ptr += bytes_read;
+   callbacks->data_ready(DATA_TYPE_EVENT);
+ }
++#else
++static void event_event_stream_has_bytes(UNUSED_ATTR eager_reader_t *reader, UNUSED_ATTR void *context) {
++   callbacks->data_ready(DATA_TYPE_EVENT);
++}
++#endif
+ 
+-static void event_acl_stream_has_bytes(UNUSED_ATTR eager_reader_t *reader, UNUSED_ATTR void *context) {
++#if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
++static void event_acl_stream_has_bytes(void *context) {
+   // No real concept of incoming SCO typed data, just ACL
++  int bytes_read;
++  hci_reader_t *reader = (hci_reader_t *) context;
++  bytes_read = read(reader->inbound_fd, reader->data_buffer+reader->wr_ptr,
++                                  reader->buffer_size - reader->wr_ptr);
++  if (bytes_read <= 0) {
++    LOG_ERROR("%s could not read HCI message type", __func__);
++    return;
++  }
++  reader->wr_ptr += bytes_read;
+   callbacks->data_ready(DATA_TYPE_ACL);
+ }
++#else
++static void event_acl_stream_has_bytes(UNUSED_ATTR eager_reader_t *reader, UNUSED_ATTR void *context) {
++   // No real concept of incoming SCO typed data, just ACL
++   callbacks->data_ready(DATA_TYPE_ACL);
++}
++#endif
+ 
+ static const hci_hal_t interface = {
+   hal_init,
+diff --git a/stack/l2cap/l2c_fcr.c b/stack/l2cap/l2c_fcr.c
+index 5ba8b56..4a36a0b 100644
+--- a/stack/l2cap/l2c_fcr.c
++++ b/stack/l2cap/l2c_fcr.c
+@@ -197,6 +197,37 @@ void l2c_fcr_start_timer (tL2C_CCB *p_ccb)
+ 
+ /*******************************************************************************
+ **
++** Function         l2c_fcr_restart_timer
++**
++** Description      This function starts the (monitor or retransmission) timer.
++**
++** Returns          -
++**
++*******************************************************************************/
++void l2c_fcr_restart_timer (tL2C_CCB *p_ccb)
++{
++    assert(p_ccb != NULL);
++    UINT32  tout;
++
++    /* The timers which are in milliseconds */
++    if (p_ccb->fcrb.wait_ack)
++    {
++        tout = (UINT32)p_ccb->our_cfg.fcr.mon_tout;
++    }
++    else
++    {
++        tout = (UINT32)p_ccb->our_cfg.fcr.rtrans_tout;
++    }
++
++    /* restart the mentioned timer */
++    alarm_set_on_queue(p_ccb->fcrb.mon_retrans_timer, tout,
++                       l2c_ccb_timer_timeout, p_ccb,
++                       btu_general_alarm_queue);
++}
++
++
++/*******************************************************************************
++**
+ ** Function         l2c_fcr_stop_timer
+ **
+ ** Description      This function stops the (monitor or transmission) timer.
+@@ -1029,8 +1060,6 @@ static BOOLEAN process_reqseq (tL2C_CCB *p_ccb, UINT16 ctrl_word)
+         }
+ 
+         /* If we are still in a wait_ack state, do not mess with the timer */
+-        if (!p_ccb->fcrb.wait_ack)
+-            l2c_fcr_stop_timer (p_ccb);
+ 
+         /* Check if we need to call the "packet_sent" callback */
+         if ( (p_ccb->p_rcb) && (p_ccb->p_rcb->api.pL2CA_TxComplete_Cb) && (full_sdus_xmitted) )
+@@ -1046,8 +1075,15 @@ static BOOLEAN process_reqseq (tL2C_CCB *p_ccb, UINT16 ctrl_word)
+     }
+ 
+     /* If anything still waiting for ack, restart the timer if it was stopped */
+-    if (!fixed_queue_is_empty(p_fcrb->waiting_for_ack_q))
+-        l2c_fcr_start_timer(p_ccb);
++    if(!p_ccb->fcrb.wait_ack) {
++        if (!fixed_queue_is_empty(p_fcrb->waiting_for_ack_q)) {
++//            l2c_fcr_start_timer(p_ccb);
++            l2c_fcr_restart_timer (p_ccb);
++        }
++        else
++            l2c_fcr_stop_timer (p_ccb);
++    }
++
+     return (TRUE);
+ }
+ 
+-- 
+2.7.4
+
+
+From 168d17639743ba450fb0d0ed21b1ccc620b991b1 Mon Sep 17 00:00:00 2001
+From: Matadeen Mishra <matade@codeaurora.org>
+Date: Fri, 14 Nov 2014 19:46:19 +0530
+Subject: [PATCH 05/11] Btsnoop write from external process
+
+- Write btsnoop from external process
+  Introduced a new proces to dump snoop packets into file.
+  Snoop packet can be send to the remote process using local
+  socket as writing to file from BT process can cause A2DP
+  choppyness.
+
+- Avoid btsnoop file write if btsnoop client is connected
+  Existing implementation writes it to file though the packet is
+  sent over network socket. This chnage will make sure to avoid
+  writing it to file if any of the network/local socket is
+  connected.
+
+- Generalized the mechanism to use same code irrespective of
+  what type of socket it is. Otherwise having thread for each
+  socket is not preferrable.
+
+- Adjust the GMT offset to match with logcat logs.
+
+- Limit the block of snoop write to 10ms and drop the packet.
+
+- Memcpy issue single write to eliminate multiple I/O.
+
+- Enable snoop by default on userdebug build.
+
+- Option to override snoop config for userdebug build.
+
+Change-Id: I13749dc348baf88af57e3ebec1ec7acd5e999c04
+---
+ conf/bt_stack.conf                |   6 +
+ hci/Android.mk                    |   5 +
+ hci/src/btsnoop.c                 | 137 ++++++++++++--
+ hci/src/btsnoop_net.c             | 145 ++++++++++++---
+ include/stack_config.h            |   1 +
+ main/stack_config.c               |   8 +
+ tools/btsnoop_dump/Android.mk     |  16 ++
+ tools/btsnoop_dump/btsnoop_dump.c | 363 ++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 642 insertions(+), 39 deletions(-)
+ create mode 100644 tools/btsnoop_dump/Android.mk
+ create mode 100644 tools/btsnoop_dump/btsnoop_dump.c
+
+diff --git a/conf/bt_stack.conf b/conf/bt_stack.conf
+index 3a7f48b..25050d8 100644
+--- a/conf/bt_stack.conf
++++ b/conf/bt_stack.conf
+@@ -1,6 +1,12 @@
++# Enable BtSnoop configuration from this config file
++# Snoop is enabled by default on userdebug builds, below configuration
++# enables to override it and take effect from the configurations here.
++BtSnoopConfigFromFile=false
++
+ # Enable BtSnoop logging function
+ # valid value : true, false
+ BtSnoopLogOutput=false
++BtSnoopExtDump=false
+ 
+ # BtSnoop log output file
+ BtSnoopFileName=/sdcard/btsnoop_hci.log
+diff --git a/hci/Android.mk b/hci/Android.mk
+index aa878e5..a0ac5b4 100644
+--- a/hci/Android.mk
++++ b/hci/Android.mk
+@@ -41,6 +41,11 @@ LOCAL_MODULE := libbt-hci
+ ifeq ($(BLUETOOTH_HCI_USE_MCT),true)
+ LOCAL_CFLAGS += -DHCI_USE_MCT
+ endif
++
++ifeq ($(TARGET_BUILD_VARIANT),userdebug)
++    LOCAL_CFLAGS += -DBTSNOOP_DEFAULT=TRUE
++endif
++
+ LOCAL_CFLAGS += $(bluetooth_CFLAGS)
+ LOCAL_CONLYFLAGS += $(bluetooth_CONLYFLAGS)
+ LOCAL_CPPFLAGS += $(bluetooth_CPPFLAGS)
+diff --git a/hci/src/btsnoop.c b/hci/src/btsnoop.c
+index 50df910..edffa20 100644
+--- a/hci/src/btsnoop.c
++++ b/hci/src/btsnoop.c
+@@ -20,6 +20,7 @@
+ 
+ #include <arpa/inet.h>
+ #include <assert.h>
++#include <cutils/properties.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <inttypes.h>
+@@ -29,8 +30,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <time.h>
+ #include <sys/stat.h>
+ #include <sys/time.h>
++#include <sys/poll.h>
+ #include <unistd.h>
+ 
+ #include "bt_types.h"
+@@ -51,6 +54,19 @@ typedef enum {
+ static const uint64_t BTSNOOP_EPOCH_DELTA = 0x00dcddb30f2f8000ULL;
+ 
+ static const stack_config_t *stack_config;
++extern int client_socket_btsnoop;
++static long int gmt_offset;
++#define USEC_PER_SEC 1000000L
++#define MAX_SNOOP_BUF_SIZE 1200
++
++// External BT snoop
++bool hci_ext_dump_enabled = false;
++
++/* snoop config from the config file, required for userdebug
++   build where snoop is enabled by default.
++   power/perf measurements need the snoop to be disabled.
++*/
++bool btsnoop_conf_from_file = false;
+ 
+ static int logfile_fd = INVALID_FD;
+ static bool module_started;
+@@ -68,7 +84,20 @@ static void update_logging();
+ // Module lifecycle functions
+ 
+ static future_t *start_up(void) {
++  time_t t = time(NULL);
++  struct tm tm_cur;
++
++  localtime_r (&t, &tm_cur);
++  LOG_INFO(LOG_TAG, "%s Time GMT offset %ld\n", __func__, tm_cur.tm_gmtoff);
++  gmt_offset = tm_cur.tm_gmtoff;
++
+   module_started = true;
++  stack_config->get_btsnoop_ext_options(&hci_ext_dump_enabled, &btsnoop_conf_from_file);
++#if (BTSNOOP_DEFAULT == TRUE)
++  if (btsnoop_conf_from_file == false) {
++    hci_ext_dump_enabled = true;
++  }
++#endif
+   update_logging();
+ 
+   return NULL;
+@@ -76,6 +105,9 @@ static future_t *start_up(void) {
+ 
+ static future_t *shut_down(void) {
+   module_started = false;
++  if (hci_ext_dump_enabled == true) {
++    property_set("bluetooth.startbtsnoop", "false");
++  }
+   update_logging();
+ 
+   return NULL;
+@@ -141,6 +173,7 @@ const btsnoop_t *btsnoop_get_interface() {
+ static uint64_t btsnoop_timestamp(void) {
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
++  tv.tv_sec += gmt_offset;
+ 
+   // Timestamp is in microseconds.
+   uint64_t timestamp = tv.tv_sec * 1000 * 1000LL;
+@@ -151,7 +184,7 @@ static uint64_t btsnoop_timestamp(void) {
+ 
+ static void update_logging() {
+   bool should_log = module_started &&
+-    (logging_enabled_via_api || stack_config->get_btsnoop_turned_on());
++    (logging_enabled_via_api || stack_config->get_btsnoop_turned_on() || hci_ext_dump_enabled);
+ 
+   if (should_log == is_logging)
+     return;
+@@ -160,6 +193,9 @@ static void update_logging() {
+   if (should_log) {
+     btsnoop_net_open();
+ 
++    if (hci_ext_dump_enabled == true) {
++      property_set("bluetooth.startbtsnoop", "true");
++    }
+     const char *log_path = stack_config->get_btsnoop_log_path();
+ 
+     // Save the old log if configured to do so
+@@ -189,17 +225,37 @@ static void update_logging() {
+ }
+ 
+ static void btsnoop_write(const void *data, size_t length) {
++  if (client_socket_btsnoop != -1) {
++    btsnoop_net_write(data, length);
++    /* skip writing to file if external client is connected*/
++    return;
++  }
++
+   if (logfile_fd != INVALID_FD)
+     write(logfile_fd, data, length);
++}
+ 
+-  btsnoop_net_write(data, length);
++#ifdef DEBUG_SNOOP
++static uint64_t time_now_us() {
++    struct timespec ts_now;
++    clock_gettime(CLOCK_BOOTTIME, &ts_now);
++    return ((uint64_t)ts_now.tv_sec * USEC_PER_SEC) + ((uint64_t)ts_now.tv_nsec / 1000);
+ }
++#endif
+ 
+ static void btsnoop_write_packet(packet_type_t type, const uint8_t *packet, bool is_received) {
+   int length_he = 0;
+   int length;
+   int flags;
+   int drops = 0;
++  struct pollfd pfd;
++#ifdef DEBUG_SNOOP
++  uint64_t ts_begin;
++  uint64_t ts_end, ts_diff;
++#endif
++  uint8_t snoop_buf[MAX_SNOOP_BUF_SIZE] = {0};
++  uint32_t offset = 0;
++
+   switch (type) {
+     case kCommandPacket:
+       length_he = packet[2] + 4;
+@@ -229,12 +285,73 @@ static void btsnoop_write_packet(packet_type_t type, const uint8_t *packet, bool
+   time_hi = htonl(time_hi);
+   time_lo = htonl(time_lo);
+ 
+-  btsnoop_write(&length, 4);
+-  btsnoop_write(&length, 4);
+-  btsnoop_write(&flags, 4);
+-  btsnoop_write(&drops, 4);
+-  btsnoop_write(&time_hi, 4);
+-  btsnoop_write(&time_lo, 4);
+-  btsnoop_write(&type, 1);
+-  btsnoop_write(packet, length_he - 1);
++  /* store the length in both original and included fields */
++  memcpy(snoop_buf + offset, &length, 4);
++  offset += 4;
++  memcpy(snoop_buf + offset, &length, 4);
++  offset += 4;
++
++  /* flags:  */
++  memcpy(snoop_buf + offset, &flags, 4);
++  offset += 4;
++
++  /* drops: none */
++  memcpy(snoop_buf + offset, &drops, 4);
++  offset += 4;
++
++  /* time */
++  memcpy(snoop_buf + offset, &time_hi, 4);
++  offset += 4;
++  memcpy(snoop_buf + offset, &time_lo, 4);
++  offset = offset + 4;
++
++  snoop_buf[offset] = type;
++  offset += 1;
++  if (offset + length_he + 1 > MAX_SNOOP_BUF_SIZE) {
++    LOG_ERROR(LOG_TAG, "Bad packet length, downgrading the length to %d from %d",
++                                      MAX_SNOOP_BUF_SIZE - offset - 1, length_he);
++    length_he = MAX_SNOOP_BUF_SIZE - offset - 1;
++  }
++  memcpy(snoop_buf + offset, packet, length_he - 1);
++
++  if (client_socket_btsnoop != -1) {
++    pfd.fd = client_socket_btsnoop;
++    pfd.events = POLLOUT;
++#ifdef DEBUG_SNOOP
++    ts_begin = time_now_us();
++#endif
++
++    if (poll(&pfd, 1, 10) == 0) {
++      LOG_ERROR(LOG_TAG, "btsnoop poll : Taking more than 10 ms : skip dump");
++#ifdef DEBUG_SNOOP
++      ts_end = time_now_us();
++      ts_diff = ts_end - ts_begin;
++      if (ts_diff > 10000) {
++        LOG_ERROR(LOG_TAG, "btsnoop poll T/O : took more time %08lld us", ts_diff);
++      }
++#endif
++      return;
++    }
++
++#ifdef DEBUG_SNOOP
++    ts_end = time_now_us();
++    ts_diff = ts_end - ts_begin;
++    if (ts_diff > 10000) {
++      LOG_ERROR(LOG_TAG, "btsnoop poll : took more time %08lld us", ts_diff);
++    }
++#endif
++  }
++#ifdef DEBUG_SNOOP
++  ts_begin = time_now_us();
++#endif
++
++  btsnoop_write(snoop_buf, offset + length_he - 1);
++
++#ifdef DEBUG_SNOOP
++  ts_end = time_now_us();
++  ts_diff = ts_end - ts_begin;
++  if (ts_diff > 10000) {
++    LOG_ERROR(LOG_TAG, "btsnoop write : Write took more time %08lld us", ts_diff);
++  }
++#endif
+ }
+diff --git a/hci/src/btsnoop_net.c b/hci/src/btsnoop_net.c
+index 0bfad4e..7789cf7 100644
+--- a/hci/src/btsnoop_net.c
++++ b/hci/src/btsnoop_net.c
+@@ -19,6 +19,9 @@
+ #define LOG_TAG "bt_snoop_net"
+ 
+ #include <assert.h>
++#include <cutils/sockets.h>
++#include <sys/un.h>
++#include <sys/poll.h>
+ #include <errno.h>
+ #include <netinet/in.h>
+ #include <pthread.h>
+@@ -36,19 +39,46 @@ static void safe_close_(int *fd);
+ static void *listen_fn_(void *context);
+ 
+ static const char *LISTEN_THREAD_NAME_ = "btsnoop_net_listen";
++#if (defined(BT_NET_DEBUG) && (NET_DEBUG == TRUE))
+ static const int LOCALHOST_ = 0x7F000001;
+ static const int LISTEN_PORT_ = 8872;
++#endif
+ 
+ static pthread_t listen_thread_;
+ static bool listen_thread_valid_ = false;
+ static pthread_mutex_t client_socket_lock_ = PTHREAD_MUTEX_INITIALIZER;
+ static int listen_socket_ = -1;
+-static int client_socket_ = -1;
++int client_socket_btsnoop = -1;
++
++/*
++    local socket for writing from different process
++    to limit blocking of HCI threads.
++*/
++#define LOCAL_SOCKET_NAME "bthcitraffic"
++static int listen_socket_local_ = -1;
++
++static int local_socket_create(void) {
++
++  listen_socket_local_ = socket(AF_LOCAL, SOCK_STREAM, 0);
++  if(listen_socket_local_ < 0) {
++    return -1;
++  }
++
++  if(socket_local_server_bind(listen_socket_local_, LOCAL_SOCKET_NAME,
++      ANDROID_SOCKET_NAMESPACE_ABSTRACT) < 0) {
++    LOG_ERROR(LOG_TAG, "Failed to create Local Socket (%s)", strerror(errno));
++    return -1;
++  }
++
++  if (listen(listen_socket_local_, 1) < 0) {
++    LOG_ERROR(LOG_TAG, "Local socket listen failed (%s)", strerror(errno));
++    close(listen_socket_local_);
++    return -1;
++  }
++  return listen_socket_local_;
++}
+ 
+ void btsnoop_net_open() {
+-#if (!defined(BT_NET_DEBUG) || (BT_NET_DEBUG != TRUE))
+-  return;               // Disable using network sockets for security reasons
+-#endif
+ 
+   listen_thread_valid_ = (pthread_create(&listen_thread_, NULL, listen_fn_, NULL) == 0);
+   if (!listen_thread_valid_) {
+@@ -59,44 +89,56 @@ void btsnoop_net_open() {
+ }
+ 
+ void btsnoop_net_close() {
+-#if (!defined(BT_NET_DEBUG) || (BT_NET_DEBUG != TRUE))
+-  return;               // Disable using network sockets for security reasons
+-#endif
+ 
+   if (listen_thread_valid_) {
++#if (defined(BT_NET_DEBUG) && (NET_DEBUG == TRUE))
++    // Disable using network sockets for security reasons
+     shutdown(listen_socket_, SHUT_RDWR);
++#endif
++    shutdown(listen_socket_local_, SHUT_RDWR);
+     pthread_join(listen_thread_, NULL);
+-    safe_close_(&client_socket_);
++    safe_close_(&client_socket_btsnoop);
+     listen_thread_valid_ = false;
+   }
+ }
+ 
+ void btsnoop_net_write(const void *data, size_t length) {
+-#if (!defined(BT_NET_DEBUG) || (BT_NET_DEBUG != TRUE))
+-  return;               // Disable using network sockets for security reasons
+-#endif
++  ssize_t ret;
+ 
+   pthread_mutex_lock(&client_socket_lock_);
+-  if (client_socket_ != -1) {
+-    ssize_t ret;
+-    OSI_NO_INTR(ret = send(client_socket_, data, length, 0));
+-
+-    if (ret == -1 && errno == ECONNRESET) {
+-      safe_close_(&client_socket_);
+-    }
++  if (client_socket_btsnoop != -1) {
++    do {
++      if ((ret = send(client_socket_btsnoop, data, length, 0)) == -1 && errno == ECONNRESET) {
++        safe_close_(&client_socket_btsnoop);
++        LOG_INFO(LOG_TAG, "%s conn closed", __func__);
++      }
++      if ((size_t) ret < length) {
++        LOG_ERROR(LOG_TAG, "%s: send : not able to write complete packet", __func__);
++      }
++      length -= ret;
++    } while ((length > 0) && (ret != -1));
+   }
++
+   pthread_mutex_unlock(&client_socket_lock_);
+ }
+ 
+ static void *listen_fn_(UNUSED_ATTR void *context) {
++  fd_set sock_fds;
++  int fd_max = -1, retval;
+ 
+   prctl(PR_SET_NAME, (unsigned long)LISTEN_THREAD_NAME_, 0, 0, 0);
+ 
++  FD_ZERO(&sock_fds);
++
++#if (defined(BT_NET_DEBUG) && (NET_DEBUG == TRUE))
++  // Disable using network sockets for security reasons
+   listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+   if (listen_socket_ == -1) {
+     LOG_ERROR(LOG_TAG, "%s socket creation failed: %s", __func__, strerror(errno));
+     goto cleanup;
+   }
++  FD_SET(listen_socket_, &sock_fds);
++  fd_max = listen_socket_;
+ 
+   int enable = 1;
+   if (setsockopt(listen_socket_, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) == -1) {
+@@ -117,30 +159,75 @@ static void *listen_fn_(UNUSED_ATTR void *context) {
+     LOG_ERROR(LOG_TAG, "%s unable to listen: %s", __func__, strerror(errno));
+     goto cleanup;
+   }
++#endif
++
++  if (local_socket_create() != -1) {
++    if (listen_socket_local_ > fd_max) {
++      fd_max = listen_socket_local_;
++    }
++    FD_SET(listen_socket_local_, &sock_fds);
++  }
++
++  if (fd_max == -1) {
++    LOG_ERROR(LOG_TAG, "%s No sockets to wait for conn..", __func__);
++    return NULL;
++  }
+ 
+   for (;;) {
+-    int client_socket;
+-    OSI_NO_INTR(client_socket = accept(listen_socket_, NULL, NULL));
+-    if (client_socket == -1) {
+-      if (errno == EINVAL || errno == EBADF) {
+-        break;
++    int client_socket = -1;
++
++    LOG_DEBUG(LOG_TAG, "waiting for client connection");
++
++    if ((retval = select(fd_max + 1, &sock_fds, NULL, NULL, NULL)) == -1) {
++      LOG_ERROR(LOG_TAG, "%s select failed %s", __func__, strerror(errno));
++      goto cleanup;
++    }
++
++    if ((listen_socket_ != -1) && FD_ISSET(listen_socket_, &sock_fds)) {
++      client_socket = accept(listen_socket_, NULL, NULL);
++      if (client_socket == -1) {
++        if (errno == EINVAL || errno == EBADF) {
++          LOG_WARN(LOG_TAG, "%s error accepting TCP socket: %s", __func__, strerror(errno));
++          break;
++        }
++        LOG_WARN(LOG_TAG, "%s error accepting TCP socket: %s", __func__, strerror(errno));
++        continue;
++      }
++    } else if ((listen_socket_local_ != -1) && FD_ISSET(listen_socket_local_, &sock_fds)){
++      struct sockaddr_un cliaddr;
++      int length;
++
++      client_socket = accept(listen_socket_local_, (struct sockaddr *)&cliaddr, (socklen_t *)&length);
++      if (client_socket == -1) {
++        if (errno == EINVAL || errno == EBADF) {
++          LOG_WARN(LOG_TAG, "%s error accepting LOCAL socket: %s", __func__, strerror(errno));
++          break;
++        }
++        LOG_WARN(LOG_TAG, "%s error accepting LOCAL socket: %s", __func__, strerror(errno));
++        continue;
+       }
+-      LOG_WARN(LOG_TAG, "%s error accepting socket: %s", __func__, strerror(errno));
+-      continue;
+     }
+ 
+     /* When a new client connects, we have to send the btsnoop file header. This allows
+        a decoder to treat the session as a new, valid btsnoop file. */
+     pthread_mutex_lock(&client_socket_lock_);
+-    safe_close_(&client_socket_);
+-    client_socket_ = client_socket;
+-
+-    OSI_NO_INTR(send(client_socket_, "btsnoop\0\0\0\0\1\0\0\x3\xea", 16, 0));
++    safe_close_(&client_socket_btsnoop);
++    client_socket_btsnoop = client_socket;
++    send(client_socket_btsnoop, "btsnoop\0\0\0\0\1\0\0\x3\xea", 16, 0);
+     pthread_mutex_unlock(&client_socket_lock_);
++
++    FD_ZERO(&sock_fds);
++    if(listen_socket_ != -1) {
++      FD_SET(listen_socket_, &sock_fds);
++    }
++    if(listen_socket_local_ != -1) {
++        FD_SET(listen_socket_local_, &sock_fds);
++    }
+   }
+ 
+ cleanup:
+   safe_close_(&listen_socket_);
++  safe_close_(&listen_socket_local_);
+   return NULL;
+ }
+ 
+diff --git a/include/stack_config.h b/include/stack_config.h
+index b5278ce..a7bc110 100644
+--- a/include/stack_config.h
++++ b/include/stack_config.h
+@@ -32,6 +32,7 @@ static const char STACK_CONFIG_MODULE[] = "stack_config_module";
+ typedef struct {
+   const char *(*get_btsnoop_log_path)(void);
+   bool (*get_btsnoop_turned_on)(void);
++  void (*get_btsnoop_ext_options)(bool *hci_ext_dump_enabled, bool *btsnoop_conf_from_file);
+   bool (*get_btsnoop_should_save_last)(void);
+   bool (*get_trace_config_enabled)(void);
+   bool (*get_pts_secure_only_mode)(void);
+diff --git a/main/stack_config.c b/main/stack_config.c
+index 109042f..c7842b7 100644
+--- a/main/stack_config.c
++++ b/main/stack_config.c
+@@ -27,6 +27,8 @@
+ 
+ const char *BTSNOOP_LOG_PATH_KEY = "BtSnoopFileName";
+ const char *BTSNOOP_TURNED_ON_KEY = "BtSnoopLogOutput";
++const char *BTSNOOP_EXT_DUMP_KEY = "BtSnoopExtDump";
++const char *BTSNOOP_CONFIG_FROM_FILE_KEY = "BtSnoopConfigFromFile";
+ const char *BTSNOOP_SHOULD_SAVE_LAST_KEY = "BtSnoopSaveLog";
+ const char *TRACE_CONFIG_ENABLED_KEY = "TraceConf";
+ const char *PTS_SECURE_ONLY_MODE = "PTS_SecurePairOnly";
+@@ -114,6 +116,11 @@ static int get_pts_smp_failure_case(void) {
+   return config_get_int(config, CONFIG_DEFAULT_SECTION, PTS_SMP_FAILURE_CASE_KEY, 0);
+ }
+ 
++static void get_btsnoop_ext_options(bool *hci_ext_dump_enabled, bool *btsnoop_conf_from_file) {
++  *hci_ext_dump_enabled = config_get_bool(config, CONFIG_DEFAULT_SECTION, BTSNOOP_EXT_DUMP_KEY, false);
++  *btsnoop_conf_from_file = config_get_bool(config, CONFIG_DEFAULT_SECTION, BTSNOOP_CONFIG_FROM_FILE_KEY, false);
++}
++
+ static config_t *get_all(void) {
+   return config;
+ }
+@@ -121,6 +128,7 @@ static config_t *get_all(void) {
+ const stack_config_t interface = {
+   get_btsnoop_log_path,
+   get_btsnoop_turned_on,
++  get_btsnoop_ext_options,
+   get_btsnoop_should_save_last,
+   get_trace_config_enabled,
+   get_pts_secure_only_mode,
+diff --git a/tools/btsnoop_dump/Android.mk b/tools/btsnoop_dump/Android.mk
+new file mode 100644
+index 0000000..f114c3f
+--- /dev/null
++++ b/tools/btsnoop_dump/Android.mk
+@@ -0,0 +1,16 @@
++LOCAL_PATH:= $(call my-dir)
++
++include $(CLEAR_VARS)
++
++LOCAL_SRC_FILES:=     \
++    btsnoop_dump.c
++
++LOCAL_C_INCLUDES :=
++
++LOCAL_MODULE_TAGS := debug optional
++
++LOCAL_MODULE:= btsnoop
++
++LOCAL_SHARED_LIBRARIES += libcutils
++
++include $(BUILD_EXECUTABLE)
+diff --git a/tools/btsnoop_dump/btsnoop_dump.c b/tools/btsnoop_dump/btsnoop_dump.c
+new file mode 100644
+index 0000000..0739462
+--- /dev/null
++++ b/tools/btsnoop_dump/btsnoop_dump.c
+@@ -0,0 +1,363 @@
++/******************************************************************************
++Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++    * Redistributions of source code must retain the above copyright
++      notice, this list of conditions and the following disclaimer.
++    * Redistributions in binary form must reproduce the above
++      copyright notice, this list of conditions and the following
++      disclaimer in the documentation and/or other materials provided
++      with the distribution.
++    * Neither the name of The Linux Foundation nor the names of its
++      contributors may be used to endorse or promote products derived
++      from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
++WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
++ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
++BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
++WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
++IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++******************************************************************************/
++
++#include <stdlib.h>
++#include <string.h>
++#include <stdio.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <ctype.h>
++#include <time.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <sys/un.h>
++#include <unistd.h>
++#include <dirent.h>
++
++#include <private/android_filesystem_config.h>
++#include <android/log.h>
++
++#include <cutils/log.h>
++
++#define MAX_FILE_SIZE 1024*1024*20
++
++#define LOGD0(t,s) __android_log_write(ANDROID_LOG_DEBUG, t, s)
++
++static int file_descriptor = -1;
++uint32_t file_size = 0;
++
++#define LOCAL_SOCKET_NAME "bthcitraffic"
++#define BTSNOOP_PATH "/data/media/0"
++#define BTSOOP_PORT 8872
++
++//#define __SNOOP_DUMP_DBG__
++
++static void snoop_log(const char *fmt_str, ...)
++{
++    static char buffer[1024];
++    va_list ap;
++
++    va_start(ap, fmt_str);
++    vsnprintf(buffer, 1024, fmt_str, ap);
++    va_end(ap);
++
++    LOGD0("btsnoop_dump: ", buffer);
++}
++
++int btsnoop_file_name (char file_name[256])
++{
++    struct tm *tmp;
++    time_t t;
++    char time_string[64];
++
++    t = time(NULL);
++    tmp = localtime(&t);
++    if (tmp == NULL)
++    {
++        snoop_log("Error : get localtime");
++        return -1;
++    }
++
++    if (strftime(time_string, 64, "%Y%m%d%H%M%S", tmp) == 0)
++    {
++        snoop_log("Error : strftime :");
++        return -1;
++    }
++    snprintf(file_name, 256, BTSNOOP_PATH"/hci_snoop%s.cfa", time_string);
++    return 0;
++}
++
++int snoop_open_file (void)
++{
++    char file_name[2][256];
++    int snoop_files_found = 0;
++    struct DIR* p_dir;
++    struct dirent* p_dirent;
++
++    p_dir = opendir(BTSNOOP_PATH);
++    if(p_dir == NULL)
++    {
++        snoop_log("snoop_log_open: Unable to open the Dir entry\n");
++        file_descriptor = -1;
++        return -1;
++    }
++    while ((p_dirent = readdir(p_dir)) != NULL)
++    {
++        int ret;
++
++        if ((ret = strncmp(p_dirent->d_name, "hci_snoop", strlen("hci_snoop"))) == 0)
++        {
++            snoop_files_found++;
++        }
++        if (snoop_files_found > 2)
++        {
++            snoop_log("snoop_log_open: Error : More than two snoop files : Abort");
++            file_descriptor = -1;
++            return -1;
++        }
++        else if (ret == 0)
++        {
++            strlcpy(file_name[snoop_files_found - 1], p_dirent->d_name, 256);
++#ifdef __SNOOP_DUMP_DBG__
++            snoop_log("snoop_log_open: snoop file found : %s", file_name[snoop_files_found - 1]);
++#endif //__SNOOP_DUMP_DBG__
++        }
++    }
++    closedir(p_dir);
++    if (snoop_files_found == 2)
++    {
++        char del_file[256];
++
++        /* Delete the oldest File */
++        if (strncmp(file_name[0], file_name[1], 256) < 0)
++        {
++            snprintf(del_file, 256, BTSNOOP_PATH"/%s", file_name[0]);
++#ifdef __SNOOP_DUMP_DBG__
++            snoop_log("snoop_log_open: old file to delete : %s", del_file);
++#endif //__SNOOP_DUMP_DBG__
++            unlink(del_file);
++        }
++        else
++        {
++            snprintf(del_file, 256, BTSNOOP_PATH"/%s", file_name[1]);
++#ifdef __SNOOP_DUMP_DBG__
++            snoop_log("snoop_log_open: old file to delete : %s", del_file);
++#endif //__SNOOP_DUMP_DBG__
++            unlink(del_file);
++        }
++    }
++
++    if (btsnoop_file_name(file_name[0]) != 0)
++    {
++        snoop_log("snoop_log_open: error : could not get snoop file name !!");
++        return -1;
++    }
++
++    snoop_log("snoop_log_open: new file : %s", file_name[0]);
++    file_descriptor = open(file_name[0], \
++                              O_WRONLY|O_CREAT|O_TRUNC, \
++                              S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
++    if (file_descriptor == -1)
++    {
++        snoop_log("snoop_log_open: Unable to open snoop log file\n");
++        file_descriptor = -1;
++        return -1;
++    }
++
++    file_size = 0;
++    write(file_descriptor, "btsnoop\0\0\0\0\1\0\0\x3\xea", 16);
++    return 0;
++}
++
++int snoop_connect_to_source (void)
++{
++    struct sockaddr_un serv_addr;
++
++    int sk, ret, retry_count = 0, addr_len;
++
++    snoop_log("snoop_connect_to_source :");
++    /* Create Socket to connect to BT Traffic source*/
++    sk = socket(AF_LOCAL, SOCK_STREAM, 0);
++    if (sk < 0)
++    {
++        snoop_log("Can't create client socket : %s\n", strerror(errno));
++        return -1;
++    }
++    else
++    {
++        memset(&serv_addr, 0, sizeof(serv_addr));
++        serv_addr.sun_family = AF_LOCAL;
++        memcpy(&serv_addr.sun_path[1], LOCAL_SOCKET_NAME, strlen(LOCAL_SOCKET_NAME));
++        addr_len =  strlen(LOCAL_SOCKET_NAME) + 1;
++        addr_len += sizeof(serv_addr.sun_family);
++        do
++        {
++            ret = connect(sk, &serv_addr, addr_len);
++            if (ret < 0)
++            {
++                snoop_log("Can't connect to BT traffic source : %s\n",strerror(errno));
++                retry_count++;
++                sleep (1);
++            }
++        } while((ret < 0) && (retry_count < 10));
++
++        if (ret < 0)
++        {
++            close(sk);
++            return -1;
++        }
++
++        snoop_log("Connected to bthcitraffic : sock fd : %d", sk);
++        return sk;
++    }
++}
++
++int read_block (int sock, unsigned char *pBuf, int len)
++{
++    int bytes_recv = 0, ret;
++    do
++    {
++#ifdef __SNOOP_DUMP_DBG__
++        snoop_log("read_block : waiting to read");
++#endif //__SNOOP_DUMP_DBG__
++
++        ret = recv(sock, &pBuf[bytes_recv], len - bytes_recv, 0);
++#ifdef __SNOOP_DUMP_DBG__
++        snoop_log("read_block : read returned %d", ret);
++#endif //__SNOOP_DUMP_DBG__
++        if ( (ret == -1) && (errno != EAGAIN) )
++        {
++            bytes_recv = ret;
++            snoop_log("Error Packet header : Connection Closed : %s\n", strerror(errno));
++            break;
++        }
++        else if (ret == 0)
++        {
++            snoop_log("Disconnected from bthcitraffic : Exiting...");
++            close (sock);
++            break;
++        }
++        bytes_recv += ret;
++    } while(bytes_recv < len);
++
++#ifdef __SNOOP_DUMP_DBG__
++    snoop_log("bytes read = %d", bytes_recv);
++#endif //__SNOOP_DUMP_DBG__
++    return bytes_recv;
++}
++
++static unsigned char read_buf[1200];
++
++int snoop_process (int sk)
++{
++    int bytes_recv = 0;
++    struct stat st;
++    uint32_t sizeoffile = 0, length;
++
++    if (file_descriptor == -1)
++    {
++        if (snoop_open_file() != 0)
++        {
++            return -1;
++        }
++    }
++
++/*
++    24 Bytes snoop Header
++    Initial 4 bytes have the length of the HCI packet
++    Read 8 bytes which have orignal length and included length
++*/
++    bytes_recv = read_block (sk, &read_buf[0], 8);
++    if ((bytes_recv == 0) || (bytes_recv == -1))
++    {
++        snoop_log("Error in reading the Header : ");
++        return -1;
++    }
++
++    length = read_buf[0] << 24 | read_buf[1] << 16 | read_buf[2] << 8 | read_buf[3];
++
++#if 1
++#ifdef __SNOOP_DUMP_DBG__
++    snoop_log("Length of Frame %ld : byte %0x %0x %0x %0x", length,
++        read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
++
++    snoop_log("File Size = %d", file_size);
++#endif //__SNOOP_DUMP_DBG__
++
++    if (file_size > MAX_FILE_SIZE)
++    {
++        if (file_descriptor != -1)
++        {
++            close(file_descriptor);
++            file_descriptor = -1;
++            if (snoop_open_file() != 0)
++            {
++                return -1;
++            }
++        }
++    }
++#endif
++
++/*
++    Read rest of snoop header(16 Bytes) and HCI Packet
++*/
++    bytes_recv = read_block (sk, &read_buf[8], length + 16);
++    if ((bytes_recv == 0) || (bytes_recv == -1))
++    {
++        snoop_log("Error reading snoop packet : ");
++        return -1;
++    }
++
++    file_size += (bytes_recv + 8);
++
++    write(file_descriptor, read_buf, bytes_recv + 8);
++
++    return 0;
++}
++
++int main (int argc, char * argv[])
++{
++    int sk, ret, bytes_recv;
++
++    snoop_log ("btsnoop dump starting");
++
++    /* set the file creation mask to allow read/write */
++    umask(0111);
++
++    sk = snoop_connect_to_source();
++
++/*
++       16 Bytes : Read and discard snoop file header
++*/
++    bytes_recv = read_block (sk, &read_buf[0], 16);
++    if ((bytes_recv == 0) || (bytes_recv == -1))
++    {
++        snoop_log("Error in reading the snoop file Header : ");
++        return -1;
++    }
++
++    if (snoop_open_file() != 0)
++    {
++        return -1;
++    }
++
++    if (sk != -1)
++    {
++        do
++        {
++            ret = snoop_process(sk);
++        } while(ret != -1);
++    }
++
++    snoop_log("btsnoop dump terminated");
++    return 0;
++}
++
+-- 
+2.7.4
+
+
+From a615c7575ea9e652a9eaa92ba5613b4d32ecaff2 Mon Sep 17 00:00:00 2001
+From: Dibyendu Roy <dibyen@codeaurora.org>
+Date: Mon, 9 May 2016 14:54:25 +0530
+Subject: [PATCH 06/11] Bluetooth: Select bluetooth HCI driver dynamically
+
+Select bluetooth HCI driver dynamically on the basis of
+qcom.bluetooth.soc property. This patch removes the use of board
+configuration option BLUETOOTH_HCI_USE_MCT and uses dynamically
+detected SOC type to choose required HCI driver.
+
+Change-Id: Idecb2fd74fbc9d361c2877e9b3a47606667e0229
+---
+ hci/Android.mk    |  4 ----
+ hci/src/hci_hal.c | 62 ++++++++++++++++++++++++++++++++++++++++++++++++-------
+ 2 files changed, 55 insertions(+), 11 deletions(-)
+
+diff --git a/hci/Android.mk b/hci/Android.mk
+index a0ac5b4..1fd5d33 100644
+--- a/hci/Android.mk
++++ b/hci/Android.mk
+@@ -38,10 +38,6 @@ LOCAL_C_INCLUDES += \
+ 
+ LOCAL_MODULE := libbt-hci
+ 
+-ifeq ($(BLUETOOTH_HCI_USE_MCT),true)
+-LOCAL_CFLAGS += -DHCI_USE_MCT
+-endif
+-
+ ifeq ($(TARGET_BUILD_VARIANT),userdebug)
+     LOCAL_CFLAGS += -DBTSNOOP_DEFAULT=TRUE
+ endif
+diff --git a/hci/src/hci_hal.c b/hci/src/hci_hal.c
+index 96fc6f8..f136565 100644
+--- a/hci/src/hci_hal.c
++++ b/hci/src/hci_hal.c
+@@ -15,23 +15,71 @@
+  *  limitations under the License.
+  *
+  ******************************************************************************/
+-
++#include <cutils/properties.h>
++#include <utils/Log.h>
++#include <string.h>
+ #include "hci_hal.h"
+ #include "hci_internals.h"
+ #if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
+ #include <assert.h>
+-#include <string.h>
+ #include "osi/include/eager_reader.h"
+ #include "osi/include/osi.h"
+ #include "osi/include/log.h"
+ #endif
+ 
++typedef enum {
++    BT_SOC_DEFAULT = 0,
++    BT_SOC_SMD = BT_SOC_DEFAULT,
++    BT_SOC_AR3K,
++    BT_SOC_ROME,
++    BT_SOC_CHEROKEE,
++    /* Add chipset type here */
++    BT_SOC_RESERVED
++} bt_soc_type;
++
++int soc_type;
++
++/* Get Bluetooth SoC type from system setting */
++static int get_bt_soc_type()
++{
++    int ret = 0;
++    char bt_soc_type[PROPERTY_VALUE_MAX];
++
++    ALOGI("bt-hci: get_bt_soc_type");
++
++    ret = property_get("qcom.bluetooth.soc", bt_soc_type, NULL);
++    if (ret != 0) {
++        ALOGI("qcom.bluetooth.soc set to %s\n", bt_soc_type);
++        if (!strncasecmp(bt_soc_type, "rome", sizeof("rome"))) {
++            return BT_SOC_ROME;
++        }
++        else if (!strncasecmp(bt_soc_type, "cherokee", sizeof("cherokee"))) {
++            return BT_SOC_CHEROKEE;
++        }
++        else if (!strncasecmp(bt_soc_type, "ath3k", sizeof("ath3k"))) {
++            return BT_SOC_AR3K;
++        }
++        else {
++            ALOGI("qcom.bluetooth.soc not set, so using default.\n");
++            return BT_SOC_DEFAULT;
++        }
++    }
++    else {
++        ALOGE("%s: Failed to get soc type", __FUNCTION__);
++        ret = BT_SOC_DEFAULT;
++    }
++
++    return ret;
++}
++
+ const hci_hal_t *hci_hal_get_interface() {
+-#if HCI_USE_MCT
+-  return hci_hal_mct_get_interface();
+-#else
+-  return hci_hal_h4_get_interface();
+-#endif
++    soc_type = get_bt_soc_type();
++
++    if (soc_type == BT_SOC_ROME || soc_type == BT_SOC_CHEROKEE) {
++        return hci_hal_h4_get_interface();
++    } else {
++        return hci_hal_mct_get_interface();
++    }
+ }
+ 
+ #if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
+-- 
+2.7.4
+
+
+From 44bdbe105c668d5d0660c788cabeca5172e966b3 Mon Sep 17 00:00:00 2001
+From: Dibyendu Roy <dibyen@codeaurora.org>
+Date: Wed, 25 May 2016 14:54:43 +0530
+Subject: [PATCH 07/11] Bluetooth: Select bluetooth transport dynamically
+
+Select bluetooth transport dynamically on the basis of
+qcom.bluetooth.soc property. This patch removes the use of board
+configuration option QCOM_BT_USE_SMD_TTY and uses dynamically
+detected SOC type to choose required transport.
+
+Change-Id: Iae1ee900362af95c42bffcc444b56267cbbae92d
+---
+ hci/Android.mk        |   4 -
+ hci/include/hci_hal.h |   3 -
+ hci/src/hci_hal_h4.c  |   4 -
+ hci/src/hci_hal_mct.c |   6 --
+ hci/src/hci_layer.c   | 256 +++++++++++++++++++++++++++++++++-----------------
+ 5 files changed, 170 insertions(+), 103 deletions(-)
+
+diff --git a/hci/Android.mk b/hci/Android.mk
+index 1fd5d33..cb60a48 100644
+--- a/hci/Android.mk
++++ b/hci/Android.mk
+@@ -22,10 +22,6 @@ LOCAL_SRC_FILES := \
+     src/vendor.c \
+     ../EventLogTags.logtags
+ 
+-ifeq ($(QCOM_BT_USE_SMD_TTY),true)
+-LOCAL_CFLAGS += -DQCOM_WCN_SSR
+-endif
+-
+ LOCAL_C_INCLUDES += \
+     $(LOCAL_PATH)/include \
+     $(LOCAL_PATH)/.. \
+diff --git a/hci/include/hci_hal.h b/hci/include/hci_hal.h
+index df6a99f..454c8ed 100644
+--- a/hci/include/hci_hal.h
++++ b/hci/include/hci_hal.h
+@@ -76,11 +76,8 @@ typedef struct hci_hal_t {
+   // header that prefixes data you're sending.
+   uint16_t (*transmit_data)(serial_data_type_t type, uint8_t *data, uint16_t length);
+ 
+-#ifdef QCOM_WCN_SSR
+   // to detect the SSR in PR controller
+   bool (*dev_in_reset)(void);
+-#endif
+-
+ } hci_hal_t;
+ 
+ // Gets the correct hal implementation, as compiled for.
+diff --git a/hci/src/hci_hal_h4.c b/hci/src/hci_hal_h4.c
+index 8087a4f..e30732a 100644
+--- a/hci/src/hci_hal_h4.c
++++ b/hci/src/hci_hal_h4.c
+@@ -229,12 +229,10 @@ done:;
+   return transmitted_length;
+ }
+ 
+-#ifdef QCOM_WCN_SSR
+ static bool hal_dev_in_reset()
+ {
+     return false;
+ }
+-#endif
+ 
+ // Internal functions
+ 
+@@ -337,9 +335,7 @@ static const hci_hal_t interface = {
+   read_data,
+   packet_finished,
+   transmit_data,
+-#ifdef QCOM_WCN_SSR
+   hal_dev_in_reset
+-#endif
+ };
+ 
+ const hci_hal_t *hci_hal_h4_get_interface() {
+diff --git a/hci/src/hci_hal_mct.c b/hci/src/hci_hal_mct.c
+index 5e43fb2..2406567 100644
+--- a/hci/src/hci_hal_mct.c
++++ b/hci/src/hci_hal_mct.c
+@@ -33,10 +33,8 @@
+ 
+ #define HCI_HAL_SERIAL_BUFFER_SIZE 1026
+ 
+-#ifdef QCOM_WCN_SSR
+ #include <termios.h>
+ #include <sys/ioctl.h>
+-#endif
+ 
+ // Our interface and modules we import
+ static const hci_hal_t interface;
+@@ -169,7 +167,6 @@ static void hal_close() {
+     uart_fds[i] = INVALID_FD;
+ }
+ 
+-#ifdef QCOM_WCN_SSR
+ static bool hal_dev_in_reset()
+ {
+   volatile int serial_bits;
+@@ -196,7 +193,6 @@ static bool hal_dev_in_reset()
+   }
+   return dev_reset_done;
+ }
+-#endif
+ 
+ static size_t read_data(serial_data_type_t type, uint8_t *buffer, size_t max_size) {
+ #if (defined(REMOVE_EAGER_THREADS) && (REMOVE_EAGER_THREADS == TRUE))
+@@ -328,9 +324,7 @@ static const hci_hal_t interface = {
+   read_data,
+   packet_finished,
+   transmit_data,
+-#ifdef QCOM_WCN_SSR
+   hal_dev_in_reset
+-#endif
+ };
+ 
+ const hci_hal_t *hci_hal_mct_get_interface() {
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 996d775..ea18a36 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -102,6 +102,16 @@ typedef struct {
+   BT_HDR *command;
+ } waiting_command_t;
+ 
++typedef enum {
++    BT_SOC_DEFAULT = 0,
++    BT_SOC_SMD = BT_SOC_DEFAULT,
++    BT_SOC_AR3K,
++    BT_SOC_ROME,
++    BT_SOC_CHEROKEE,
++    /* Add chipset type here */
++    BT_SOC_RESERVED
++} bt_soc_type;
++
+ // Using a define here, because it can be stringified for the property lookup
+ #define DEFAULT_STARTUP_TIMEOUT_MS 8000
+ #define STRING_VALUE_OF(x) #x
+@@ -109,6 +119,7 @@ typedef struct {
+ static const uint32_t EPILOG_TIMEOUT_MS = 3000;
+ static const uint32_t COMMAND_PENDING_TIMEOUT_MS = 8000;
+ 
++extern int soc_type;
+ // Our interface
+ static bool interface_created;
+ static hci_t interface;
+@@ -571,103 +582,176 @@ static void command_timed_out(UNUSED_ATTR void *context) {
+ static void hal_says_data_ready(serial_data_type_t type) {
+   packet_receive_data_t *incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type)];
+ 
+-#ifdef QCOM_WCN_SSR
+   uint8_t reset;
+-#endif
+ 
+   uint8_t byte;
+   while (hal->read_data(type, &byte, 1) != 0) {
+-#ifdef QCOM_WCN_SSR
+-    reset = hal->dev_in_reset();
+-    if (reset) {
+-      incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
+-      if(!create_hw_reset_evt_packet(incoming))
+-        break;
+-      else {
+-        //Reset SOC status to trigger hciattach service
+-        if(property_set("bluetooth.status", "off") < 0) {
+-            LOG_ERROR(LOG_TAG, "SSR: Error resetting SOC status\n ");
++    if (soc_type == BT_SOC_ROME || soc_type == BT_SOC_CHEROKEE) {
++        reset = hal->dev_in_reset();
++        if (reset) {
++            incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
++            if(!create_hw_reset_evt_packet(incoming))
++                break;
++            else {
++            //Reset SOC status to trigger hciattach service
++                if(property_set("bluetooth.status", "off") < 0) {
++                    LOG_ERROR(LOG_TAG, "SSR: Error resetting SOC status\n ");
++                } else {
++                    ALOGE("SSR: SOC Status is reset\n ");
++                }
++            }
+         } else {
+-            ALOGE("SSR: SOC Status is reset\n ");
++            switch (incoming->state) {
++            case BRAND_NEW:
++                // Initialize and prepare to jump to the preamble reading state
++                incoming->bytes_remaining = preamble_sizes[PACKET_TYPE_TO_INDEX(type)];
++                memset(incoming->preamble, 0, PREAMBLE_BUFFER_SIZE);
++                incoming->index = 0;
++                incoming->state = PREAMBLE;
++                // INTENTIONAL FALLTHROUGH
++            case PREAMBLE:
++                incoming->preamble[incoming->index] = byte;
++                incoming->index++;
++                incoming->bytes_remaining--;
++
++                if (incoming->bytes_remaining == 0) {
++                    // For event and sco preambles, the last byte we read is the length
++                    incoming->bytes_remaining = (type == DATA_TYPE_ACL) ? RETRIEVE_ACL_LENGTH(incoming->preamble) : byte;
++
++                    size_t buffer_size = BT_HDR_SIZE + incoming->index + incoming->bytes_remaining;
++
++                    if (buffer_size > MCA_USER_RX_BUF_SIZE) {
++                        LOG_ERROR(LOG_TAG, "%s buffer_size(%zu) exceeded allowed packet size, allocation not possible", __func__, buffer_size);
++                        incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
++                        if(create_hw_reset_evt_packet(incoming))
++                            break;
++                        else
++                            return;
++                    }
++
++                    incoming->buffer = (BT_HDR *)buffer_allocator->alloc(buffer_size);
++
++                    if (!incoming->buffer) {
++                        LOG_ERROR(LOG_TAG, "%s error getting buffer for incoming packet of type %d and size %zd", __func__, type, buffer_size);
++                        // Can't read any more of this current packet, so jump out
++                        incoming->state = incoming->bytes_remaining == 0 ? BRAND_NEW : IGNORE;
++                        break;
++                    }
++
++                    // Initialize the buffer
++                    incoming->buffer->offset = 0;
++                    incoming->buffer->layer_specific = 0;
++                    incoming->buffer->event = outbound_event_types[PACKET_TYPE_TO_INDEX(type)];
++                    memcpy(incoming->buffer->data, incoming->preamble, incoming->index);
++
++                    incoming->state = incoming->bytes_remaining > 0 ? BODY : FINISHED;
++                }
++
++                break;
++            case BODY:
++                incoming->buffer->data[incoming->index] = byte;
++                incoming->index++;
++                incoming->bytes_remaining--;
++
++                size_t bytes_read = hal->read_data(type, (incoming->buffer->data + incoming->index), incoming->bytes_remaining);
++                incoming->index += bytes_read;
++                incoming->bytes_remaining -= bytes_read;
++
++                incoming->state = incoming->bytes_remaining == 0 ? FINISHED : incoming->state;
++                break;
++            case IGNORE:
++                incoming->bytes_remaining--;
++                if (incoming->bytes_remaining == 0) {
++                    incoming->state = BRAND_NEW;
++                    // Don't forget to let the hal know we finished the packet we were ignoring.
++                    // Otherwise we'll get out of sync with hals that embed extra information
++                    // in the uart stream (like H4). #badnewsbears
++                    hal->packet_finished(type);
++                    return;
++                }
++
++                break;
++            case FINISHED:
++                LOG_ERROR(LOG_TAG, "%s the state machine should not have been left in the finished state.", __func__);
++                break;
++            }
+         }
+-      }
+-    } else
+-#endif
+-    {
+-    switch (incoming->state) {
+-      case BRAND_NEW:
+-        // Initialize and prepare to jump to the preamble reading state
+-        incoming->bytes_remaining = preamble_sizes[PACKET_TYPE_TO_INDEX(type)];
+-        memset(incoming->preamble, 0, PREAMBLE_BUFFER_SIZE);
+-        incoming->index = 0;
+-        incoming->state = PREAMBLE;
+-        // INTENTIONAL FALLTHROUGH
+-      case PREAMBLE:
+-        incoming->preamble[incoming->index] = byte;
+-        incoming->index++;
+-        incoming->bytes_remaining--;
+-
+-        if (incoming->bytes_remaining == 0) {
+-          // For event and sco preambles, the last byte we read is the length
+-          incoming->bytes_remaining = (type == DATA_TYPE_ACL) ? RETRIEVE_ACL_LENGTH(incoming->preamble) : byte;
+-
+-          size_t buffer_size = BT_HDR_SIZE + incoming->index + incoming->bytes_remaining;
+-
+-          if (buffer_size > MCA_USER_RX_BUF_SIZE) {
+-            LOG_ERROR(LOG_TAG, "%s buffer_size(%zu) exceeded allowed packet size, allocation not possible", __func__, buffer_size);
+-            incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
+-            if(create_hw_reset_evt_packet(incoming))
+-              break;
+-            else
+-              return;
+-          }
+-
+-          incoming->buffer = (BT_HDR *)buffer_allocator->alloc(buffer_size);
+-
+-          if (!incoming->buffer) {
+-            LOG_ERROR(LOG_TAG, "%s error getting buffer for incoming packet of type %d and size %zd", __func__, type, buffer_size);
+-            // Can't read any more of this current packet, so jump out
+-            incoming->state = incoming->bytes_remaining == 0 ? BRAND_NEW : IGNORE;
++    } else {
++
++        switch (incoming->state) {
++        case BRAND_NEW:
++            // Initialize and prepare to jump to the preamble reading state
++            incoming->bytes_remaining = preamble_sizes[PACKET_TYPE_TO_INDEX(type)];
++            memset(incoming->preamble, 0, PREAMBLE_BUFFER_SIZE);
++            incoming->index = 0;
++            incoming->state = PREAMBLE;
++            // INTENTIONAL FALLTHROUGH
++        case PREAMBLE:
++            incoming->preamble[incoming->index] = byte;
++            incoming->index++;
++            incoming->bytes_remaining--;
++
++            if (incoming->bytes_remaining == 0) {
++                // For event and sco preambles, the last byte we read is the length
++                incoming->bytes_remaining = (type == DATA_TYPE_ACL) ? RETRIEVE_ACL_LENGTH(incoming->preamble) : byte;
++
++                size_t buffer_size = BT_HDR_SIZE + incoming->index + incoming->bytes_remaining;
++
++                if (buffer_size > MCA_USER_RX_BUF_SIZE) {
++                    LOG_ERROR(LOG_TAG, "%s buffer_size(%zu) exceeded allowed packet size, allocation not possible", __func__, buffer_size);
++                    incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type = DATA_TYPE_EVENT)];
++                    if(create_hw_reset_evt_packet(incoming))
++                        break;
++                    else
++                        return;
++                }
++
++                incoming->buffer = (BT_HDR *)buffer_allocator->alloc(buffer_size);
++
++                if (!incoming->buffer) {
++                    LOG_ERROR(LOG_TAG, "%s error getting buffer for incoming packet of type %d and size %zd", __func__, type, buffer_size);
++                    // Can't read any more of this current packet, so jump out
++                    incoming->state = incoming->bytes_remaining == 0 ? BRAND_NEW : IGNORE;
++                    break;
++                }
++
++                // Initialize the buffer
++                incoming->buffer->offset = 0;
++                incoming->buffer->layer_specific = 0;
++                incoming->buffer->event = outbound_event_types[PACKET_TYPE_TO_INDEX(type)];
++                memcpy(incoming->buffer->data, incoming->preamble, incoming->index);
++
++                incoming->state = incoming->bytes_remaining > 0 ? BODY : FINISHED;
++            }
++
+             break;
+-          }
++        case BODY:
++            incoming->buffer->data[incoming->index] = byte;
++            incoming->index++;
++            incoming->bytes_remaining--;
+ 
+-          // Initialize the buffer
+-          incoming->buffer->offset = 0;
+-          incoming->buffer->layer_specific = 0;
+-          incoming->buffer->event = outbound_event_types[PACKET_TYPE_TO_INDEX(type)];
+-          memcpy(incoming->buffer->data, incoming->preamble, incoming->index);
++            size_t bytes_read = hal->read_data(type, (incoming->buffer->data + incoming->index), incoming->bytes_remaining);
++            incoming->index += bytes_read;
++            incoming->bytes_remaining -= bytes_read;
+ 
+-          incoming->state = incoming->bytes_remaining > 0 ? BODY : FINISHED;
+-        }
++            incoming->state = incoming->bytes_remaining == 0 ? FINISHED : incoming->state;
++            break;
++        case IGNORE:
++            incoming->bytes_remaining--;
++            if (incoming->bytes_remaining == 0) {
++                incoming->state = BRAND_NEW;
++                // Don't forget to let the hal know we finished the packet we were ignoring.
++                // Otherwise we'll get out of sync with hals that embed extra information
++                // in the uart stream (like H4). #badnewsbears
++                hal->packet_finished(type);
++                return;
++            }
+ 
+-        break;
+-      case BODY:
+-        incoming->buffer->data[incoming->index] = byte;
+-        incoming->index++;
+-        incoming->bytes_remaining--;
+-
+-        size_t bytes_read = hal->read_data(type, (incoming->buffer->data + incoming->index), incoming->bytes_remaining);
+-        incoming->index += bytes_read;
+-        incoming->bytes_remaining -= bytes_read;
+-
+-        incoming->state = incoming->bytes_remaining == 0 ? FINISHED : incoming->state;
+-        break;
+-      case IGNORE:
+-        incoming->bytes_remaining--;
+-        if (incoming->bytes_remaining == 0) {
+-          incoming->state = BRAND_NEW;
+-          // Don't forget to let the hal know we finished the packet we were ignoring.
+-          // Otherwise we'll get out of sync with hals that embed extra information
+-          // in the uart stream (like H4). #badnewsbears
+-          hal->packet_finished(type);
+-          return;
++            break;
++        case FINISHED:
++            LOG_ERROR(LOG_TAG, "%s the state machine should not have been left in the finished state.", __func__);
++            break;
+         }
+-
+-        break;
+-      case FINISHED:
+-        LOG_ERROR(LOG_TAG, "%s the state machine should not have been left in the finished state.", __func__);
+-        break;
+-    }
+     }
+ 
+     if (incoming->state == FINISHED) {
+-- 
+2.7.4
+
+
+From 1899df2ceb8f91a9d775fdd9a23fdb29748ad587 Mon Sep 17 00:00:00 2001
+From: Gurpreet Ghai <gghai@codeaurora.org>
+Date: Fri, 24 Jun 2016 19:26:56 +0530
+Subject: [PATCH 08/11] Bluetooth: Implement hardware error timer for command
+ timeout case
+
+Root cause: As part of command timeout, ssr cleanup is initiated
+and a special buffer is sent from the filter to SOC for intentional
+crashing and collection of logs. The time provided before the
+killing of stack is not sufficient for the whole dump to be
+collected.
+
+Fix: A hardware error timer is created which gets started in the
+command timeout case immediately after sending ssr cleanup to the
+vendor. The timer will expire after due time to kill the process.
+
+Change-Id: I60cf55c9d4ae4078ee05bca89359de60091b3ba6
+CRs-Fixed: 1022533
+---
+ hci/src/hci_layer.c | 33 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index ea18a36..5518300 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -120,6 +120,8 @@ static const uint32_t EPILOG_TIMEOUT_MS = 3000;
+ static const uint32_t COMMAND_PENDING_TIMEOUT_MS = 8000;
+ 
+ extern int soc_type;
++static uint32_t HARDWARE_ERROR_TIMEOUT_MS = 2000;
++
+ // Our interface
+ static bool interface_created;
+ static hci_t interface;
+@@ -141,6 +143,7 @@ static thread_t *thread; // We own this
+ static volatile bool firmware_is_configured = false;
+ static alarm_t *epilog_timer;
+ static alarm_t *startup_timer;
++static alarm_t *hardware_error_timer;
+ 
+ // Outbound-related
+ static int command_credits = 1;
+@@ -169,6 +172,7 @@ static void sco_config_callback(bool success);
+ static void event_epilog(void *context);
+ static void epilog_finished_callback(bool success);
+ static void epilog_timer_expired(void *context);
++static void hardware_error_timer_expired(void *context);
+ 
+ static void event_command_ready(fixed_queue_t *queue, void *context);
+ static void event_packet_ready(fixed_queue_t *queue, void *context);
+@@ -502,6 +506,15 @@ static void epilog_timer_expired(UNUSED_ATTR void *context) {
+   thread_stop(thread);
+ }
+ 
++static void hardware_error_timer_expired(UNUSED_ATTR void *context) {
++  LOG_INFO("%s", __func__);
++  alarm_free(hardware_error_timer);
++  hardware_error_timer = NULL;
++  ssr_cleanup(0x33);//SSR reason 0x33 = HW ERR EVT
++  usleep(20000);
++  kill(getpid(), SIGKILL);
++}
++
+ // Command/packet transmitting functions
+ 
+ static void event_command_ready(fixed_queue_t *queue, UNUSED_ATTR void *context) {
+@@ -571,7 +584,25 @@ static void command_timed_out(UNUSED_ATTR void *context) {
+   }
+ 
+   LOG_ERROR(LOG_TAG, "%s restarting the bluetooth process.", __func__);
+-  usleep(10000);
++
++  if (soc_type == BT_SOC_ROME || soc_type == BT_SOC_CHEROKEE) {
++    char value[PROPERTY_VALUE_MAX] = {0};
++    if( property_get("wc_transport.force_special_byte", value, "false") && !strcmp(value,"true")) {
++      hardware_error_timer = alarm_new("hci.hardware_error_timer");
++      if (!hardware_error_timer) {
++        LOG_ERROR("%s unable to create hardware error timer.", __func__);
++        usleep(2000000);
++        kill(getpid(), SIGKILL);
++      }
++      if(soc_type == BT_SOC_ROME)
++        HARDWARE_ERROR_TIMEOUT_MS = 2000000;
++      else if(soc_type == BT_SOC_CHEROKEE)
++        HARDWARE_ERROR_TIMEOUT_MS = 5000000;
++      alarm_set(hardware_error_timer, HARDWARE_ERROR_TIMEOUT_MS, hardware_error_timer_expired, NULL);
++      return;
++    }
++  }
++  usleep(20000);
+   kill(getpid(), SIGKILL);
+ }
+ 
+-- 
+2.7.4
+
+
+From 2c40ab4d7c3f83c3b9d4577ad3e727f18d91fa0f Mon Sep 17 00:00:00 2001
+From: Srinu Jella <sjella@codeaurora.org>
+Date: Mon, 24 Aug 2015 21:00:28 +0530
+Subject: [PATCH 09/11] Bluetooth: Read BLE vendor capability to proceed on
+ Secure conn
+
+- Read BLE vendor capability to proceed on enablement of
+  secure connection support from Host.
+
+- If BLE vendor capability is supported from the controller
+  then secure connection is enabled from Host.
+
+CRs-Fixed: 1041642
+Change-Id: I64e79d4e6fff7d9f1b0ea7272250e8155f5888e2
+---
+ device/include/controller.h      |  1 +
+ device/src/controller.c          | 24 +++++++++++++++++++-----
+ hci/include/hci_packet_factory.h |  1 +
+ hci/include/hci_packet_parser.h  |  4 ++++
+ hci/src/hci_layer.c              | 21 +++++++++++++++++++++
+ hci/src/hci_packet_factory.c     |  7 ++++++-
+ hci/src/hci_packet_parser.c      | 18 +++++++++++++++++-
+ 7 files changed, 69 insertions(+), 7 deletions(-)
+
+diff --git a/device/include/controller.h b/device/include/controller.h
+index 291c33d..711ae07 100644
+--- a/device/include/controller.h
++++ b/device/include/controller.h
+@@ -76,6 +76,7 @@ typedef struct controller_t {
+   uint8_t (*get_ble_resolving_list_max_size)(void);
+   void (*set_ble_resolving_list_max_size)(int resolving_list_max_size);
+   uint8_t *(*get_local_supported_codecs)(uint8_t *number_of_codecs);
++  bool (*supports_ble_offload_features)(void);
+ } controller_t;
+ 
+ const controller_t *controller_get_interface();
+diff --git a/device/src/controller.c b/device/src/controller.c
+index 4440ea5..b932e62 100644
+--- a/device/src/controller.c
++++ b/device/src/controller.c
+@@ -73,6 +73,7 @@ static uint8_t number_of_local_supported_codecs = 0;
+ 
+ static bool readable;
+ static bool ble_supported;
++static bool ble_offload_features_supported;
+ static bool simple_pairing_supported;
+ static bool secure_connections_supported;
+ 
+@@ -177,11 +178,17 @@ static future_t *start_up(void) {
+     page_number++;
+   }
+ 
++  // read BLE offload features support from controller
++  response = AWAIT_COMMAND(packet_factory->make_ble_read_offload_features_support());
++  packet_parser->parse_ble_read_offload_features_response(response, &ble_offload_features_supported);
++
+ #if (SC_MODE_INCLUDED == TRUE)
+-  secure_connections_supported = HCI_SC_CTRLR_SUPPORTED(features_classic[2].as_array);
+-  if (secure_connections_supported) {
+-    response = AWAIT_COMMAND(packet_factory->make_write_secure_connections_host_support(HCI_SC_MODE_ENABLED));
+-    packet_parser->parse_generic_command_complete(response);
++  if(ble_offload_features_supported) {
++    secure_connections_supported = HCI_SC_CTRLR_SUPPORTED(features_classic[2].as_array);
++    if (secure_connections_supported) {
++      response = AWAIT_COMMAND(packet_factory->make_write_secure_connections_host_support(HCI_SC_MODE_ENABLED));
++      packet_parser->parse_generic_command_complete(response);
++    }
+   }
+ #endif
+ 
+@@ -385,6 +392,12 @@ static bool supports_ble_connection_parameters_request(void) {
+   return HCI_LE_CONN_PARAM_REQ_SUPPORTED(features_ble.as_array);
+ }
+ 
++static bool supports_ble_offload_features(void) {
++  assert(readable);
++  assert(ble_supported);
++  return ble_offload_features_supported;
++}
++
+ static uint16_t get_acl_data_size_classic(void) {
+   assert(readable);
+   return acl_data_size_classic;
+@@ -485,7 +498,8 @@ static const controller_t interface = {
+ 
+   get_ble_resolving_list_max_size,
+   set_ble_resolving_list_max_size,
+-  get_local_supported_codecs
++  get_local_supported_codecs,
++  supports_ble_offload_features
+ };
+ 
+ const controller_t *controller_get_interface() {
+diff --git a/hci/include/hci_packet_factory.h b/hci/include/hci_packet_factory.h
+index ac6f12a..0056817 100644
+--- a/hci/include/hci_packet_factory.h
++++ b/hci/include/hci_packet_factory.h
+@@ -41,6 +41,7 @@ typedef struct {
+   BT_HDR *(*make_ble_read_suggested_default_data_length)(void);
+   BT_HDR *(*make_ble_set_event_mask)(const bt_event_mask_t *event_mask);
+   BT_HDR *(*make_read_local_supported_codecs)(void);
++  BT_HDR *(*make_ble_read_offload_features_support)(void);
+ } hci_packet_factory_t;
+ 
+ const hci_packet_factory_t *hci_packet_factory_get_interface();
+diff --git a/hci/include/hci_packet_parser.h b/hci/include/hci_packet_parser.h
+index ba3b193..d09ac59 100644
+--- a/hci/include/hci_packet_parser.h
++++ b/hci/include/hci_packet_parser.h
+@@ -96,6 +96,10 @@ typedef struct {
+     BT_HDR *response,
+     uint8_t *number_of_local_supported_codecs, uint8_t *local_supported_codecs);
+ 
++  void (*parse_ble_read_offload_features_response)(
++    BT_HDR *response,
++    bool *ble_offload_features_supported);
++
+ } hci_packet_parser_t;
+ 
+ const hci_packet_parser_t *hci_packet_parser_get_interface();
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 5518300..3d602e6 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -932,6 +932,27 @@ static waiting_command_t *get_waiting_command(command_opcode_t opcode) {
+     pthread_mutex_unlock(&commands_pending_response_lock);
+     return wait_entry;
+   }
++  // look for any command complete with improper VS Opcode
++  for (const list_node_t *node = list_begin(commands_pending_response);
++      node != list_end(commands_pending_response);
++      node = list_next(node)) {
++    waiting_command_t *wait_entry = list_node(node);
++
++    if (!wait_entry || wait_entry->opcode != opcode) {
++        if(((wait_entry->opcode & HCI_GRP_VENDOR_SPECIFIC) == HCI_GRP_VENDOR_SPECIFIC) &&
++           ((opcode & HCI_GRP_VENDOR_SPECIFIC) == HCI_GRP_VENDOR_SPECIFIC)) {
++            LOG_DEBUG("%s VS event found treat it as valid 0x%x", __func__, opcode);
++        }
++        else {
++            continue;
++        }
++    }
++
++    list_remove(commands_pending_response, wait_entry);
++
++    pthread_mutex_unlock(&commands_pending_response_lock);
++    return wait_entry;
++  }
+ 
+   pthread_mutex_unlock(&commands_pending_response_lock);
+   return NULL;
+diff --git a/hci/src/hci_packet_factory.c b/hci/src/hci_packet_factory.c
+index 96f578a..d43d274 100644
+--- a/hci/src/hci_packet_factory.c
++++ b/hci/src/hci_packet_factory.c
+@@ -141,6 +141,10 @@ static BT_HDR *make_read_local_supported_codecs(void) {
+     return make_command_no_params(HCI_READ_LOCAL_SUPPORTED_CODECS);
+ }
+ 
++static BT_HDR *make_ble_read_offload_features_support(void) {
++    return make_command_no_params(HCI_BLE_VENDOR_CAP_OCF);
++}
++
+ static BT_HDR *make_ble_set_event_mask(const bt_event_mask_t *event_mask) {
+   uint8_t *stream;
+   uint8_t parameter_size = sizeof(bt_event_mask_t);
+@@ -198,7 +202,8 @@ static const hci_packet_factory_t interface = {
+   make_ble_read_resolving_list_size,
+   make_ble_read_suggested_default_data_length,
+   make_ble_set_event_mask,
+-  make_read_local_supported_codecs
++  make_read_local_supported_codecs,
++  make_ble_read_offload_features_support
+ };
+ 
+ const hci_packet_factory_t *hci_packet_factory_get_interface() {
+diff --git a/hci/src/hci_packet_parser.c b/hci/src/hci_packet_parser.c
+index 9f7dae8..06e0f31 100644
+--- a/hci/src/hci_packet_parser.c
++++ b/hci/src/hci_packet_parser.c
+@@ -88,6 +88,21 @@ static void parse_read_local_supported_codecs_response(
+   buffer_allocator->free(response);
+ }
+ 
++
++static void parse_ble_read_offload_features_response(
++    BT_HDR *response,
++    bool *ble_offload_features_supported) {
++
++  uint8_t *stream = read_command_complete_header(response, NO_OPCODE_CHECKING, 0 /* bytes after */);
++  if(stream) {
++    *ble_offload_features_supported  = true;
++  } else {
++    *ble_offload_features_supported  = false;
++  }
++
++  buffer_allocator->free(response);
++}
++
+ static void parse_read_bd_addr_response(
+     BT_HDR *response,
+     bt_bdaddr_t *address_ptr) {
+@@ -256,7 +271,8 @@ static const hci_packet_parser_t interface = {
+   parse_ble_read_local_supported_features_response,
+   parse_ble_read_resolving_list_size_response,
+   parse_ble_read_suggested_default_data_length_response,
+-  parse_read_local_supported_codecs_response
++  parse_read_local_supported_codecs_response,
++  parse_ble_read_offload_features_response
+ };
+ 
+ const hci_packet_parser_t *hci_packet_parser_get_interface() {
+-- 
+2.7.4
+
+
+From 723038191815a8aef3da1e799ea3c7b945eb2a60 Mon Sep 17 00:00:00 2001
+From: Gurpreet Ghai <gghai@codeaurora.org>
+Date: Thu, 4 Feb 2016 20:10:03 +0530
+Subject: [PATCH 10/11] BT: Adding check for hci_layer status before processing
+ func calls
+
+When hci_layer functions for transmit command and cleanup
+are called during hci_layer shutdown, they might try to
+access lists that are already cleared as part of shutdown
+process. This causes issues during BT turn off.
+
+Added check within such functions to check for hci_layer
+state before processing.
+
+Change-Id: I8dbca9893e03dfc500886c5033a79976dc5d23e1
+
+Bluetooth: Process data only after cmd cmpl for reset
+
+- Process incoming event/ACL packet only after command
+  complete event received for reset command.
+
+- Otherwise there might be a chance of receving other
+  events though the controller module is not ready,
+  as part of processing events, accessing the controller
+  module capabilities leads to crash.
+
+Change-Id: Id4b1d207fd237d56c95c7af801fc25d8c05808df
+
+BT: Adding check for hci_layer state before dispatching event
+
+During Bluetooth disable process, alarms and command lists
+are reset causing race condition because pending commands
+and packets are still present in the list and reactor still
+runing. So, adding check for hci layer state before processing
+events of command and packet ready.
+
+Change-Id: Ib10a2caa7a9e4739088d5192208fb4f97f3e4bbf
+CRs-Fixed: 1022151
+---
+ hci/src/hci_layer.c | 57 ++++++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 41 insertions(+), 16 deletions(-)
+
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 3d602e6..27afcfa 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -82,7 +82,8 @@ typedef enum {
+ 
+ typedef enum {
+   HCI_SHUTDOWN,
+-  HCI_STARTED
++  HCI_STARTED,
++  HCI_READY
+ } hci_layer_state;
+ 
+ typedef struct {
+@@ -385,7 +386,7 @@ static void transmit_command(
+     command_complete_cb complete_callback,
+     command_status_cb status_callback,
+     void *context) {
+-  if (hci_state != HCI_STARTED) {
++  if (hci_state < HCI_STARTED) {
+     LOG_ERROR("%s Returning, hci_layer not ready", __func__);
+     return;
+   }
+@@ -427,12 +428,14 @@ static void transmit_downward(data_dispatcher_type_t type, void *data) {
+   if (type == MSG_STACK_TO_HC_HCI_CMD) {
+     // TODO(zachoverflow): eliminate this call
+     transmit_command((BT_HDR *)data, NULL, NULL, NULL);
+-    LOG_WARN(LOG_TAG, "%s legacy transmit of command. Use transmit_command instead.", __func__);
+-  } else if (hci_state != HCI_STARTED) {
++    LOG_WARN("%s legacy transmit of command. Use transmit_command instead.", __func__);
++  } else {
++    if (hci_state < HCI_STARTED) {
+       LOG_ERROR("%s Returning, hci_layer not ready", __func__);
+       return;
+-  } else {
++    } else {
+     fixed_queue_enqueue(packet_queue, data);
++    }
+   }
+ }
+ 
+@@ -518,6 +521,10 @@ static void hardware_error_timer_expired(UNUSED_ATTR void *context) {
+ // Command/packet transmitting functions
+ 
+ static void event_command_ready(fixed_queue_t *queue, UNUSED_ATTR void *context) {
++  if (hci_state < HCI_STARTED) {
++    LOG_ERROR("%s Returning, hci_layer not ready", __func__);
++    return;
++  }
+   if (command_credits > 0) {
+     waiting_command_t *wait_entry = fixed_queue_dequeue(queue);
+     command_credits--;
+@@ -537,6 +544,10 @@ static void event_command_ready(fixed_queue_t *queue, UNUSED_ATTR void *context)
+ }
+ 
+ static void event_packet_ready(fixed_queue_t *queue, UNUSED_ATTR void *context) {
++  if (hci_state < HCI_STARTED) {
++    LOG_ERROR("%s Returning, hci_layer not ready", __func__);
++    return;
++  }
+   // The queue may be the command queue or the packet queue, we don't care
+   BT_HDR *packet = (BT_HDR *)fixed_queue_dequeue(queue);
+ 
+@@ -790,18 +801,28 @@ static void hal_says_data_ready(serial_data_type_t type) {
+       btsnoop->capture(incoming->buffer, true);
+ 
+       if (type != DATA_TYPE_EVENT) {
+-        packet_fragmenter->reassemble_and_dispatch(incoming->buffer);
++        if(hci_state == HCI_READY) {
++          packet_fragmenter->reassemble_and_dispatch(incoming->buffer);
++        } else {
++          LOG_WARN("%s, Ignoring the ACL pkt received", __func__);
++          buffer_allocator->free(incoming->buffer);
++        }
+       } else if (!filter_incoming_event(incoming->buffer)) {
+-        // Dispatch the event by event code
+-        uint8_t *stream = incoming->buffer->data;
+-        uint8_t event_code;
+-        STREAM_TO_UINT8(event_code, stream);
+-
+-        data_dispatcher_dispatch(
+-          interface.event_dispatcher,
+-          event_code,
+-          incoming->buffer
+-        );
++        if (hci_state == HCI_READY) {
++          // Dispatch the event by event code
++          uint8_t *stream = incoming->buffer->data;
++          uint8_t event_code;
++          STREAM_TO_UINT8(event_code, stream);
++
++          data_dispatcher_dispatch(
++            interface.event_dispatcher,
++            event_code,
++            incoming->buffer
++          );
++        } else {
++          LOG_WARN("%s, Ignoring the event pkt received", __func__);
++          buffer_allocator->free(incoming->buffer);
++        }
+       }
+ 
+       // We don't control the buffer anymore
+@@ -833,6 +854,10 @@ static bool filter_incoming_event(BT_HDR *packet) {
+     STREAM_TO_UINT8(command_credits, stream);
+     STREAM_TO_UINT16(opcode, stream);
+ 
++    if (HCI_RESET == opcode) {
++      hci_state = HCI_READY;
++    }
++
+     wait_entry = get_waiting_command(opcode);
+     if (!wait_entry) {
+       // TODO: Currently command_credits aren't parsed at all; here or in higher layers...
+-- 
+2.7.4
+
+
+From b780e0d12e01c1614595f5392324a6162be746d7 Mon Sep 17 00:00:00 2001
+From: sooorajjj <sooorajjj@gmail.com>
+Date: Wed, 8 Feb 2017 20:27:57 +0530
+Subject: [PATCH 11/11] Add ssr_cleanup function ! 	Probably missed this
+ while picking commits
+
+---
+ hci/src/hci_layer.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/hci/src/hci_layer.c b/hci/src/hci_layer.c
+index 27afcfa..7ef3394 100644
+--- a/hci/src/hci_layer.c
++++ b/hci/src/hci_layer.c
+@@ -509,6 +509,19 @@ static void epilog_timer_expired(UNUSED_ATTR void *context) {
+   thread_stop(thread);
+ }
+ 
++void ssr_cleanup (int reason) {
++    LOG_INFO("%s", __func__);
++    if (hci_state < HCI_STARTED) {
++        LOG_ERROR("%s Returning, hci_layer already shut down", __func__);
++        return;
++    }
++    // if (vendor != NULL) {
++        // vendor->ssr_cleanup(reason);
++    // } else {
++        // LOG_ERROR("%s: vendor is NULL", __func__);
++    // }
++}
++
+ static void hardware_error_timer_expired(UNUSED_ATTR void *context) {
+   LOG_INFO("%s", __func__);
+   alarm_free(hardware_error_timer);
+-- 
+2.7.4
+
